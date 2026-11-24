@@ -721,7 +721,8 @@ class Game:
                     ok,
                     correct_msg=(
                         "Your K-map expression is correct. "
-                        "You can use this to solve the next puzzle."
+                        "You have successfully solved Puzzle 2. "
+                        "You can proceed to the next puzzle."
                     ),
                     wrong_msg=(
                         "Your K-map expression is not correct. "
@@ -847,6 +848,31 @@ class Game:
             self.txt(s, l, x, y, font, color); y += lh
         return y
 
+    # ---------------- interaction hint ----------------
+    def draw_interaction_hint(self, ui):
+        """Show a subtle [SEARCH] label above the player near an interactable object."""
+        if self.find_near() is None:
+            return
+
+        cx, cy = self.camera()
+        player_x = int((self.px - cx) * ZOOM)
+        player_y = int((self.py - cy) * ZOOM)
+
+        player_img = self.sprite.image(self.form)
+        if player_img:
+            label_y = player_y - player_img.get_height() - 8
+        else:
+            label_y = player_y - int(SPR_H * ZOOM) - 8
+
+        label = self.f_tiny.render("[SEARCH]", True, (220, 225, 235))
+        label_rect = label.get_rect(center=(player_x, label_y))
+
+        # A faint background keeps the text readable without drawing too much attention.
+        background = pygame.Surface((label_rect.width + 8, label_rect.height + 4), pygame.SRCALPHA)
+        background.fill((15, 18, 25, 155))
+        ui.blit(background, (label_rect.x - 4, label_rect.y - 2))
+        ui.blit(label, label_rect)
+
     # ---------------- drawing: world ----------------
     def camera(self):
         cx = max(0.0, min(IMG_W - VIEW_W, self.px - VIEW_W / 2))
@@ -881,6 +907,10 @@ class Game:
             pygame.draw.circle(ui, (240, 200, 160), (sx + sw_ // 2, sy + sh_ // 6), max(6, sw_ // 3))
         if not self.lights:
             dk = pygame.Surface((UW, UH)); dk.fill((0, 0, 25)); dk.set_alpha(150); ui.blit(dk, (0, 0))
+
+        # The prompt appears only while the player is close enough to an interactable object.
+        self.draw_interaction_hint(ui)
+
         if self.debug:
             pts = [w2s(floor_left(FLOOR_TOP), FLOOR_TOP), w2s(floor_right(FLOOR_TOP), FLOOR_TOP),
                    w2s(floor_right(FLOOR_BOT), FLOOR_BOT), w2s(floor_left(FLOOR_BOT), FLOOR_BOT)]
