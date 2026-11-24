@@ -112,8 +112,8 @@ class Obj:
 OBJS = [
     Obj("whiteboard", "whiteboard", "Whiteboard", 300, 580, 180, (165, 180, 235, 510)),
     Obj("paper", "paper", "Paper on the cabinet", 700, 400, 130, (640, 170, 70, 100)),
-    Obj("laptop3", "nand", "Laptop", 1370, 920, 190, (1215, 870, 115, 115)),
-    Obj("laptop4", "twos", "Laptop", 570, 690, 150, (665, 600, 115, 95)),
+    Obj("laptop3", "nand", "Laptop 1", 1370, 920, 190, (1215, 870, 115, 115)),
+    Obj("laptop4", "twos", "Laptop 2", 570, 690, 150, (665, 600, 115, 95)),
     Obj("projector", "screen", "Projector screen", 1560, 400, 120, (1600, 170, 230, 540)),
     Obj("pc", "pc", "Teacher computer", 1540, 620, 120, (1500, 565, 70, 95)),
     Obj("lightsw", "lightsw", "Light switch", 1150, 310, 100, (1125, 195, 26, 28)),
@@ -189,7 +189,7 @@ class Game:
                    ("r3", "All 5 puzzles answered (card round 3)"),
                    ("door", "All cards done, at the door"),
                    ("clear", "Stage 1 cleared")]
-    ACTIONS = [("door_wrong", "At the door, notebook has a WRONG value"),
+    ACTIONS = [("door_wrong", "At the door, test an incorrect door code"),
                ("armor", "Give 1 Armor")]
 
     def __init__(self):
@@ -221,10 +221,11 @@ class Game:
         self.px, self.py = SPAWN
         self.sprite.reset()
         self.mode, self.cur, self.page, self.cmsg = "map", None, 0, ""
+        self.feedback = None  # None=neutral, True=correct, False=incorrect
         self.state = "play"
         self.exit_requested = False
         self.lights = True
-        # puzzle state. done = player confirmed an answer. right = hidden truth (never shown to the player).
+        # Puzzle state. done/right become True only after a correct answer is confirmed.
         self.done = [False] * 5
         self.right = [False] * 5
         self.ans = {"A": None, "B": None, "C": None}      # what the notebook shows
@@ -327,8 +328,8 @@ class Game:
             self.say("Armor +1")
         elif key == "door_wrong":
             self.jump_to("door")
-            self.ans["A"] = ANS_A + 1
-            self.right[0] = False
+            # Test a wrong door entry without writing an incorrect value to the Notebook.
+            self.door_digits = [9, 9, 9, 9, 9]
 
     # ---------------- input ----------------
     
@@ -353,6 +354,8 @@ class Game:
                 for i, r in enumerate(self.sw_rects):
                     if r.collidepoint(e.pos):
                         self.sw[i] = not self.sw[i]
+                        if self.mode == "closeup" and self.cur and self.cur.kind in ("whiteboard", "paper", "twos"):
+                            self.clear_feedback()
             if e.type == pygame.KEYDOWN:
                 k = e.key
                 if k in (pygame.K_UP, pygame.K_w): ev["up"] = 1
@@ -363,7 +366,10 @@ class Game:
                     if self.c_down is None:
                         self.c_down, self.c_long = now, False
                 elif k in (pygame.K_ESCAPE, pygame.K_BACKSPACE): ev["back"] = 1
-                elif pygame.K_1 <= k <= pygame.K_8: self.sw[k - pygame.K_1] = not self.sw[k - pygame.K_1]
+                elif pygame.K_1 <= k <= pygame.K_8:
+                    self.sw[k - pygame.K_1] = not self.sw[k - pygame.K_1]
+                    if self.mode == "closeup" and self.cur and self.cur.kind in ("whiteboard", "paper", "twos"):
+                        self.clear_feedback()
                 elif k == pygame.K_n: self.sw[14] = not self.sw[14]
                 elif k == pygame.K_h: self.show_help = not self.show_help
                 elif k in (pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4): self.form = k - pygame.K_F1
@@ -487,13 +493,53 @@ class Game:
             return "Armor Shard 1 / 2 (saved for later)."
         return ITEM_TEXT[item][1]
 
-    # ---------------- answers (no right/wrong feedback to the player) ----------------
-    def commit(self, i, correct, msg, key=None, value=None):
-        self.undo_rec = {"i": i, "ans": dict(self.ans), "done": self.done[i], "right": self.right[i]}
-        if key: self.ans[key] = value
-        self.done[i], self.right[i] = True, correct
-        self.cmsg = msg
-        self.say("Notebook updated!")
+    # ---------------- answer validation / notebook ----------------
+    def clear_feedback(self):
+        self.feedback = None
+        self.cmsg = ""
+
+    def commit(self, i, correct, msg=None, key=None, value=None, note=None,
+               *, correct_msg=None, wrong_msg=None):
+        """Validate an answer; only correct answers update progress and Notebook.
+
+        `msg` is retained for compatibility with older calls.
+        New calls should provide separate `correct_msg` and `wrong_msg`.
+        """
+        if correct_msg is None:
+            correct_msg = msg or "Your answer is correct."
+        if wrong_msg is None:
+            wrong_msg = msg or "Your answer is not correct. Please try again."
+
+        if not correct:
+            # A wrong retry must never erase an answer that was already solved.
+            if not self.done[i]:
+                self.right[i] = False
+            self.feedback = False
+            self.cmsg = "INCORRECT! " + wrong_msg
+            self.say("Incorrect - try again", 2.5)
+            return False
+
+        # Store the previous answer state for the Undo item.
+        self.undo_rec = {
+            "i": i,
+            "ans": dict(self.ans),
+            "done": self.done[i],
+            "right": self.right[i]
+        }
+
+        if key is not None:
+            self.ans[key] = value
+
+        self.done[i], self.right[i] = True, True
+
+        # Notebook entries are added only after validation succeeds.
+        if note and note not in self.notes:
+            self.notes.append(note)
+
+        self.feedback = True
+        self.cmsg = "CORRECT! " + correct_msg
+        self.say("Puzzle %d correct - saved to Notebook" % (i + 1), 2.5)
+        return True
 
     def door_damage(self):
         if self.armor > 0:
@@ -579,6 +625,7 @@ class Game:
             o = self.find_near()
             if o:
                 self.mode, self.cur, self.page, self.cmsg = "closeup", o, 0, ""
+                self.feedback = None
                 self.sprite.stop()
                 if o.kind == "screen" and not self.lights: self.p5_seen = True
 
@@ -604,8 +651,7 @@ class Game:
         elif o.collect and st["revealed"] and not st["collected"]:
             st["collected"] = True
             self.notes.append(o.collect)
-            self.notes.append("-> Logged answer attempt: " + o.name)
-            self.say("Added to notebook (N).")
+            self.say("Clue added to notebook (N).")
 
     # ---- puzzle 1 ----
     def in_whiteboard(self, ev):
@@ -613,33 +659,76 @@ class Game:
             if ev["tap"]: self.page = 1
         elif ev["tap"]:
             val = self.p1_val()
-            self.notes.append("P1 answer entered: %d" % val)
-            self.commit(0, val == ANS_A, "Answer recorded in the notebook.", "A", val)
+            self.commit(
+                0,
+                val == ANS_A,
+                key="A",
+                value=val,
+                correct_msg="The base-conversion answer is correct. Puzzle 1 is complete.",
+                wrong_msg="The base-conversion answer is incorrect. Check your calculation and try again.",
+                note="P1 correct answer: A = %d" % val
+            )
 
     # ---- puzzle 2 ----
     def in_paper(self, ev):
         if self.page == 0:
-            if ev["tap"]: self.page = 1
+            if ev["tap"]:
+                self.page = 1
             return
-        if ev["left"]: self.p2_cur = (self.p2_cur - 1) % 3
-        elif ev["right"]: self.p2_cur = (self.p2_cur + 1) % 3
-        elif ev["tap"]:
-            u, p = [self.sw[7 - i] for i in range(4)], [self.sw[3 - i] for i in range(4)]
-            self.p2[self.p2_cur] = (u, p)
-            self.cmsg = "Stored in T%d." % (self.p2_cur + 1)
+
+        if ev["up"]:
+            self.clear_feedback()
+            self.p2_cur = (self.p2_cur - 1) % 3
+
         elif ev["down"]:
-            self.p2[self.p2_cur] = ([False] * 4, [False] * 4)
-            self.cmsg = "T%d cleared." % (self.p2_cur + 1)
-        elif ev["up"]:
+            self.clear_feedback()
+            self.p2_cur = (self.p2_cur + 1) % 3
+
+        elif ev["tap"]:
+            self.clear_feedback()
+
+            u = [self.sw[7 - i] for i in range(4)]
+            p = [self.sw[3 - i] for i in range(4)]
+
+            self.p2[self.p2_cur] = (u, p)
+
+            self.cmsg = (
+                "Stored in Term%d. "
+                "Continue setting the other terms, then press BTNR to check."
+                % (self.p2_cur + 1)
+            )
+
+        elif ev["right"]:
             terms = [(u, p) for u, p in self.p2 if any(u)]
+
             if not terms:
-                self.cmsg = "Store at least one term first."
+                self.feedback = False
+                self.cmsg = (
+                    "INCORRECT! No terms have been stored yet. "
+                    "Please create your K-map expression first."
+                )
+
             else:
                 lits = sum(sum(u) for u, _ in terms)
                 ok = p2_table(self.p2) == P2_TRUTH and lits <= 4
-                self.p2_eq = " + ".join(term_str(u, p) for u, p in terms)
-                self.notes.append("P2 answer entered: F = " + self.p2_eq)
-                self.commit(1, ok, "Answer recorded in the notebook.")
+
+                self.p2_eq = " + ".join(
+                    term_str(u, p) for u, p in terms
+                )
+
+                self.commit(
+                    1,
+                    ok,
+                    correct_msg=(
+                        "Your K-map expression is correct. "
+                        "You can use this to solve the next puzzle."
+                    ),
+                    wrong_msg=(
+                        "Your K-map expression is not correct. "
+                        "Check your variables and terms, then try again."
+                    ),
+                    note="P2 correct answer: F = " + self.p2_eq
+                )
 
     # ---- puzzle 3 ----
     def in_nand(self, ev):
@@ -647,15 +736,27 @@ class Game:
             if ev["tap"]: self.page = 1
             return
         c = self.p3_cur
-        if ev["left"]: self.p3_cur = (c - 1) % 9
-        elif ev["right"]: self.p3_cur = (c + 1) % 9
+        if ev["left"]:
+            self.clear_feedback()
+            self.p3_cur = (c - 1) % 9
+        elif ev["right"]:
+            self.clear_feedback()
+            self.p3_cur = (c + 1) % 9
         elif ev["up"] or ev["down"]:
+            self.clear_feedback()
             n = 4 if c == 8 else 4 + c // 2
             self.p3[c] = (self.p3[c] + (1 if ev["up"] else -1)) % n
         elif ev["tap"]:
             t = p3_table(self.p3)
-            self.notes.append("P3 circuit saved.")
-            self.commit(2, t == P2_TRUTH, "Circuit saved in the notebook.", "B", bin(t).count("1"))
+            self.commit(
+                2,
+                t == P2_TRUTH,
+                key="B",
+                value=bin(t).count("1"),
+                correct_msg="The NAND circuit produces the correct truth table. Puzzle 3 is complete.",
+                wrong_msg="The NAND circuit output does not match the required truth table. Check the connections and try again.",
+                note="P3 correct circuit: NAND-only output matches the K-map."
+            )
 
     # ---- puzzle 4 ----
     def in_twos(self, ev):
@@ -663,8 +764,15 @@ class Game:
             if ev["tap"]: self.page = 1
         elif ev["tap"]:
             val = self.p4_val()
-            self.notes.append("P4 value entered: %d" % val)
-            self.commit(3, val == P4_ANSWER, "Value recorded in the notebook.", "C", bin(val).count("1"))
+            self.commit(
+                3,
+                val == P4_ANSWER,
+                key="C",
+                value=bin(val).count("1"),
+                correct_msg="The two's-complement value is correct. Puzzle 4 is complete.",
+                wrong_msg="The binary value is incorrect. Check the two's-complement conversion and try again.",
+                note="P4 correct answer: 11110100 (unsigned 244 / signed -12)."
+            )
 
     def in_lightsw(self, ev):
         if ev["tap"]:
@@ -680,18 +788,30 @@ class Game:
             elif ev["up"]: self.page = max(0, self.page - 1)
             return
         c = self.p5_cur
-        if ev["up"]: self.p5_cur = (c - 1) % 3
-        elif ev["down"]: self.p5_cur = (c + 1) % 3
-        elif ev["left"]: self.p5[c] = (self.p5[c] - 1) % 26
-        elif ev["right"]: self.p5[c] = (self.p5[c] + 1) % 26
+        if ev["up"]:
+            self.clear_feedback()
+            self.p5_cur = (c - 1) % 3
+        elif ev["down"]:
+            self.clear_feedback()
+            self.p5_cur = (c + 1) % 3
+        elif ev["left"]:
+            self.clear_feedback()
+            self.p5[c] = (self.p5[c] - 1) % 26
+        elif ev["right"]:
+            self.clear_feedback()
+            self.p5[c] = (self.p5[c] + 1) % 26
         elif ev["tap"]:
             entered_str = "".join(chr(65 + val) for val in self.p5)
-            self.notes.append("P5 attempt: " + entered_str)
-            if entered_str == PC_PASS:
-                self.commit(4, True, "ACCESS GRANTED")
+            ok = entered_str == PC_PASS
+            if self.commit(
+                4,
+                ok,
+                correct_msg="ACCESS GRANTED. The login passcode is correct. Puzzle 5 is complete.",
+                wrong_msg="ACCESS DENIED. The passcode is incorrect. Check the letters and try again."
+                ,
+                note="P5 correct login passcode: " + entered_str
+            ):
                 self.page = 0
-            else:
-                self.cmsg = "Incorrect passcode. Attempt logged."
 
     def in_door(self, ev):
         n = 2 if self.door_layer == 0 else 5
@@ -789,8 +909,9 @@ class Game:
         self.txt(s, o.name.upper(), 16, 10, self.f_l)
         foot = (getattr(self, "cu_" + o.kind, None) or self.cu_plain)(s)
         if self.cmsg:
+            msg_color = (110, 255, 145) if self.feedback is True else (255, 105, 105) if self.feedback is False else (255, 225, 120)
             for i, l in enumerate(self.wrap(self.cmsg, self.f_m, 610)[:2]):
-                self.txt(s, l, 16, 440 + i * 24, self.f_m, (255, 225, 120))
+                self.txt(s, l, 16, 440 + i * 24, self.f_m, msg_color)
         pygame.draw.rect(s, (40, 44, 60), (0, 494, 640, 46))
         self.txt(s, foot or "", 16, 499, self.f_s, (170, 200, 255))
         self.txt(s, "Back: hold Space (BTNC) or press Esc", 16, 520, self.f_tiny, (140, 150, 180))
@@ -859,13 +980,13 @@ class Game:
             u, p = self.p2[i]
             y = 90 + i * 46
             if i == self.p2_cur: pygame.draw.rect(s, (255, 230, 120), (310, y - 6, 270, 38), border_radius=6)
-            self.txt(s, "T%d:  %s" % (i + 1, term_str(u, p) or "(empty)"), 324, y, self.f_m, ink)
+            self.txt(s, "Term%d:  %s" % (i + 1, term_str(u, p) or "(empty)"), 324, y, self.f_m, ink)
         u, p = [self.sw[7 - i] for i in range(4)], [self.sw[3 - i] for i in range(4)]
         self.txt(s, "switches say:  %s" % (term_str(u, p) or "(nothing)"), 310, 250, self.f_m, (30, 80, 160))
         self.txt(s, "SW7-4: which letters (A B C D)", 310, 290, self.f_s, ink)
         self.txt(s, "SW3-0: 1 = plain, 0 = inverted", 310, 312, self.f_s, ink)
         if self.done[1]: self.txt(s, "LOGGED: F = %s" % self.p2_eq, 70, 380, self.f_m, (30, 80, 160))
-        return "L/R slot | BTNC store | BTND clear | BTNU confirm answer"
+        return "BTND/BTCU slot | BTNC store | BTNR confirm answer"
 
     def cu_nand(self, s):
         pygame.draw.rect(s, (10, 20, 10), (40, 60, 560, 360), border_radius=6)
@@ -873,9 +994,9 @@ class Game:
         if self.page == 0:
             lines = ["SYSTEM TERMINAL - LAB 01", "",
                      "Status: Spec match required",
-                     "Task: Build F from puzzle 2 as a",
+                     "Task: Build F from puzzle on cabinet as a",
                      "      minimal combinational circuit",
-                     "Constraint: 74HC00 quad NAND gates only."]
+                     "Constraint: 74HC00 quad NAND gates only. G(n) = Gate(n)"]
             for i, l in enumerate(lines): self.txt(s, l, 56, 76 + i * 34, self.f_mono, g)
             return "BTNC: open circuit editor"
         for k in range(4):
@@ -923,7 +1044,7 @@ class Game:
 
         clue_rows = [
             ("Facebook, Explorer, Canva", "2", "0"),
-            ("Facebook, Canva, X", "1", "1"),
+            ("Facebook, Canva, X", "1", "0"),
             ("Canva, AppStore, Pinterest", "2", "1"),
             ("Pinterest, AppStore, Facebook", "1", "0"),
             ("AppStore, Explorer, Facebook", "1", "0"),

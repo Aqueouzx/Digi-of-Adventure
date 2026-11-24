@@ -528,6 +528,7 @@ class Game:
         self.px, self.py = SPAWN
         self.mode, self.cur, self.page, self.cmsg = "map", None, 0, ""
         self.state = "play"
+        self.exit_requested = False
         self.found = {k: 0 for k in PART_QTY}                       # parts collected so far
         self.done_spots, self.read_hints = set(), set()
         self.rnd, self.codes, self.qa_pairs = 0, None, None         # QA tests cleared / current test inputs / the 3 pairs
@@ -553,6 +554,101 @@ class Game:
         self.toast = (text, time.time() + secs)
 
     def parts_total(self): return sum(self.found.values())
+
+    # ---------------- demo hub hooks ----------------
+    def start(self, handoff=None):
+        self.reset_stage(True)
+        self.show_help = False
+        if handoff:
+            self.hearts = max(1, min(3, handoff.get("hearts", 3)))
+            self.form = max(0, min(3, handoff.get("form", 1)))
+            self.armor = max(0, min(3, handoff.get("armor", 0)))
+            self.boost = bool(handoff.get("boost", False))
+            self.shard = int(handoff.get("shards", 0))
+
+    def get_handoff(self):
+        return {
+            "hearts": self.hearts,
+            "form": self.form,
+            "armor": self.armor,
+            "boost": self.boost,
+            "shards": self.shard,
+        }
+
+    def get_progress(self):
+        if self.state == "clear": return 5
+        if self.rnd >= ROUNDS: return 4
+        if self.r_run[3] or self.rnd >= 2: return 3
+        if self.parts_total() >= TOTAL_PARTS: return 2
+        if self.r_run[2] or self.parts_total() >= CARD2_AT: return 1
+        return 0
+
+    def set_hearts(self, n):
+        self.hearts = max(1, min(3, n))
+        if self.state == "over":
+            self.state = "play"
+
+    def set_form(self, i):
+        self.form = max(0, min(3, i))
+
+    def toggle_debug(self):
+        self.debug = not self.debug
+
+    def jump_to(self, key):
+        form = self.form
+        self.reset_stage(True)
+        self.form = form
+        self.show_help = False
+        if key == "start":
+            return
+        if key == "clear":
+            self.state, self.form = "clear", 2
+            return
+
+        # ข้ามการ์ดรอบ 1 และข้ามคัตซีน Boss เดินเข้าห้อง (ให้ Boss นั่งรอที่โต๊ะเลย)
+        self.career = 0
+        self.r_run[1] = self.r_done[1] = True
+        self.intro_started, self.cutscene, self.talk = True, False, None
+        self.npc = {"x": NPC_SEAT[0], "y": NPC_SEAT[1], "state": "sit", "path": [], "walk": False}
+
+        if key == "r2":
+            for sp in ITEM_SPOTS[:CARD2_AT]:
+                self.done_spots.add(sp.id)
+                self.found[sp.part] += 1
+            return
+
+        # ตั้งแต่ parts / r3 / door ขึ้นไป: เก็บครบ 18 ชิ้น + ข้ามการ์ดรอบ 2
+        self.cheat_parts()
+        self.r_run[2] = self.r_done[2] = True
+        self.new_round()
+
+        if key == "parts":
+            return
+
+        # ต่อวงจรให้เสร็จพร้อมเทสต์
+        self.w = dict(REF)
+        if key == "r3":
+            self.rnd = 2
+            self.new_round()
+            return
+
+        if key == "door":
+            self.rnd = ROUNDS
+            self.r_run[3] = self.r_done[3] = True
+            self.say("All 3 QA passed! Go to the exit door.")
+
+    def do_action(self, key):
+        if key == "auto_wire":
+            self.auto_wire()
+            self.say("Circuit auto-wired! Talk to the Boss.")
+        elif key == "skill_ready":
+            self.play_t = SKILL_WAIT
+            self.skill_used = False
+            self.skill_t = 0.0
+            self.say("Workshop-shirt skill ready! (Press E)")
+        elif key == "armor":
+            self.armor = min(3, self.armor + 1)
+            self.say("Armor +1")
 
     # ---------------- input ----------------
     def poll(self, events):
@@ -924,7 +1020,9 @@ class Game:
             if ev["tap"] or ev["back"]: self.show_help = False
             return
         if self.state == "clear":
-            if ev["tap"]: self.reset_stage(True)
+            if ev["tap"]:
+                if self.standalone: self.reset_stage(True)
+                else: self.exit_requested = True
             return
         if self.state == "over":
             if time.time() > self.over_until: self.reset_stage()
@@ -1750,7 +1848,8 @@ class Game:
             self.ctxt(ui, "STAGE 2 CLEAR - INTERNSHIP COMPLETE!", UW // 2, 160, self.f_l, (150, 255, 170))
             self.ctxt(ui, "Hearts left: %d" % self.hearts, UW // 2, 220, self.f_m)
             self.ctxt(ui, "CHARACTER EVOLVED -> %s" % FORM_NAMES[2], UW // 2, 270, self.f_m, (255, 230, 120))
-            self.ctxt(ui, "BTNC: play again", UW // 2, 370, self.f_s, (170, 200, 255))
+            self.ctxt(ui, "BTNC: play again" if self.standalone else "BTNC: continue to the next stage",
+                      UW // 2, 370, self.f_s, (170, 200, 255))
         self.draw_toast(ui)
         if self.show_help: self.draw_help(ui, s)
         screen.blit(pygame.transform.smoothscale(ui, (SCR_W, SCR_H)), (0, 0))
