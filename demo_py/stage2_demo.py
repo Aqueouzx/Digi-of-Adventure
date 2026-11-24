@@ -1256,10 +1256,8 @@ class Game:
             elif ev["tap"]:
                 self.wsrc = None
             return
-        if ev["left"]: self.wcur = (self.wcur - 1) % N_CUR
-        elif ev["right"]: self.wcur = (self.wcur + 1) % N_CUR
-        elif ev["up"]: self.wcur = (self.wcur - 6) % N_CUR
-        elif ev["down"]: self.wcur = (self.wcur + 6) % N_CUR
+        if ev["left"] or ev["right"] or ev["up"] or ev["down"]:   # the cursor moves to the nearest pin in the pressed direction
+            self.wcur = self.cursor_step(self.wcur, (ev["right"] - ev["left"], ev["down"] - ev["up"]))
         elif ev["tap"]:
             self.msel = None
             if self.wcur == CUR_CLEAR:
@@ -1271,6 +1269,21 @@ class Game:
                 self.wprev = self.w.get(sink)
                 self.wsrc = ([None] + SRC_LIST).index(self.wprev)
                 self.cmsg = ""
+
+    def cur_pos(self, i):                # screen position of cursor slot i (a pin, or the CLEAR ALL button)
+        return BTN_CLEAR.center if i == CUR_CLEAR else SINK_POS[SINKS[i]]
+
+    def cursor_step(self, cur, d):       # d = (dx, dy) of the pressed arrow; pick the closest pin lying that way (same row/column preferred)
+        x0, y0 = self.cur_pos(cur)
+        best, bs = cur, None
+        for i in range(N_CUR):
+            if i == cur: continue
+            x, y = self.cur_pos(i)
+            ax, ay = (x - x0) * d[0] + (y - y0) * d[1], abs((x - x0) * d[1]) + abs((y - y0) * d[0])   # along / across the pressed direction
+            if ax < 4: continue
+            sc = ax + 3 * ay
+            if bs is None or sc < bs: best, bs = i, sc
+        return best
 
     def bench_click(self, pos):          # mouse (PC demo only): click a source, then click a pin
         if self.wsrc is not None:
@@ -1668,7 +1681,10 @@ class Game:
         for lbl, p in (("C", (160, 238)), ("B", (160, 270)), ("A", (160, 302))):
             self.txt(ui, lbl, p[0] + 10, p[1] - 8, self.f_s, (40, 40, 40))
         if not done:
-            if self.wcur < len(SINKS): pygame.draw.circle(ui, (255, 230, 120), SINK_POS[SINKS[self.wcur]], 12, 3)
+            if self.wcur < len(SINKS):                   # cursor: dark-orange ring with a black outline so it shows on every pin
+                cp = SINK_POS[SINKS[self.wcur]]
+                pygame.draw.circle(ui, (0, 0, 0), cp, 15, 7)
+                pygame.draw.circle(ui, (220, 80, 0), cp, 15, 4)
             if self.wsrc is not None and w.get(SINKS[self.wcur]):
                 for p in SRC_POS[w[SINKS[self.wcur]]]: pygame.draw.circle(ui, (255, 230, 120), p, 11, 3)
             if self.msel:
