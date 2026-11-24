@@ -185,8 +185,9 @@ PART_LABEL = {k: n for k, n, _ in PARTS}
 PART_SHORT = {"not": "74HC04", "and": "74HC08", "or": "74HC32", "seg": "7-seg", "dip": "DIP sw", "r10k": "10k",
               "r220": "220 ohm", "bb": "Breadboard", "psu": "DC supply"}
 TOTAL_PARTS = sum(PART_QTY.values())             # 18
+CARD_BACKS = False                               # False: no *_back pictures, every round shows the card faces right away. True: face-down backs, flip on pick
 CARD_BOX, CARD_CY = (170, 190), 180                  # card pictures are fitted into this box (never stretched), centre y
-CARD2_AT, CARD3_AT = 8, 18                       # card rounds: 1 at the start, 2 when 8 parts are found, 3 when all 18 are found
+CARD2_AT, CARD3_AT = 8, 18                       # card rounds: none at the start, 2 when 8 parts are found, 3 when all 18 are found
 
 
 R_ITEM, R_OBJ = 50, 70                        # how close (px) you must stand to the spot's walkable point
@@ -593,9 +594,9 @@ class Game:
         self.boost, self.slow_t = False, 0.0
         self.hearts = 3
         self.deck = {"active": False, "round": 1, "perm": (0, 1, 2), "cursor": 1, "face": None}
-        self.career = None
-        self.r_run = {1: False, 2: False, 3: False}
-        self.r_done = {1: False, 2: False, 3: False}
+        self.career = self.lfsr_pick(3)                             # no card draw at the start: the career is picked silently (used by the round 2 / 3 card pictures)
+        self.r_run = {1: True, 2: False, 3: False}                  # round 1 (the start card) is skipped
+        self.r_done = {1: True, 2: False, 3: False}
         self.hint_popup, self.hint_title, self.toast, self.inv_cur = None, "HINT", ("", 0), 0
         self.flash, self.over_until = 0.0, 0.0
         self.play_t, self.skill_t, self.skill_used, self.zoom = 0.0, 0.0, False, None
@@ -613,6 +614,7 @@ class Game:
         self.reset_stage(True)
         self.show_help = False
         if handoff:
+            if handoff.get("career") in (0, 1, 2): self.career = handoff["career"]      # career chosen in the previous stage (optional)
             self.hearts = max(1, min(3, handoff.get("hearts", 3)))
             self.form = max(0, min(3, handoff.get("form", 1)))
             self.armor = max(0, min(3, handoff.get("armor", 0)))
@@ -626,6 +628,7 @@ class Game:
             "armor": self.armor,
             "boost": self.boost,
             "shards": self.shard,
+            "career": self.career,
         }
 
     def get_progress(self):
@@ -793,11 +796,10 @@ class Game:
         self.deck = {"active": True, "round": r, "perm": PERMS[self.lfsr_pick(6)], "cursor": 1, "face": None}
         self.r_run[r] = True
 
-    def card_trigger(self):              # round 1: start | round 2: 8 parts found | round 3: all 18 parts found
+    def card_trigger(self):              # round 1: skipped | round 2: 8 parts found | round 3: all 18 parts found
         if self.deck["active"]:
             return
-        if not self.r_run[1]: self.card_start(1)
-        elif self.zoom: return                                      # wait until the found-part zoom has finished
+        if self.zoom: return                                        # wait until the found-part zoom has finished
         elif self.r_done[1] and not self.r_run[2] and self.parts_total() >= CARD2_AT: self.card_start(2)
         elif self.r_done[2] and not self.r_run[3] and self.parts_total() >= CARD3_AT: self.card_start(3)
 
@@ -1721,8 +1723,10 @@ class Game:
                 fb_col = CAREERS[self.career][1] if self.career is not None else (80, 85, 100)
 
             img = None
-            if self.card_art:                                   # every round: face-down back first, the picked card flips to its face
-                if d["round"] == 1 or revealed:
+            if self.card_art:
+                if not CARD_BACKS:                              # faces only (same look in all 3 rounds); the picked card gets a gold frame
+                    img = self.card_art.get_image(d["round"], self.career, pos, True, slot_idx=idx)
+                elif d["round"] == 1 or revealed:               # backs on: face-down first, the picked card flips to its face
                     img = self.card_art.get_image(d["round"], self.career, pos, revealed, slot_idx=idx)
                 elif self.career is not None:
                     img = self.card_art.get_r1_back(self.career)
@@ -1748,6 +1752,8 @@ class Game:
 
             if d["face"] is None and pos == d["cursor"]:
                 pygame.draw.rect(s, (255, 255, 255), r.inflate(10, 10), 4, border_radius=12)
+            elif revealed and not CARD_BACKS:
+                pygame.draw.rect(s, (255, 230, 120), r.inflate(10, 10), 4, border_radius=12)
 
         if d["face"] is not None:
             name, desc = ITEM_TEXT[CARD_ITEMS[d["round"]][d["perm"][d["face"]]]]
