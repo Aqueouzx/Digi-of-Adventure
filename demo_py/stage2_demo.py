@@ -52,6 +52,72 @@ def load_img(name, size=None):
         return None
 
 
+class BossSprite:
+    """Boss skin from assets/: every image whose name starts with "Boss" (any case, png/jpg/webp).
+    Name = Boss[_dir][_pose], e.g. Boss_front_stand.png, Boss_right_stepl.png, Boss_sit.png, or just Boss.png.
+      dir  : back | front | left | right      (a missing left is the right image mirrored; no dir = used for every direction)
+      pose : stand | stepl | stepr | sit      (no pose = stand)"""
+    DIRS = ("back", "front", "left", "right")
+    POSE = {"stand": "stand", "idle": "stand", "stepl": "stepl", "walk1": "stepl", "stepr": "stepr", "walk2": "stepr",
+            "sit": "sit", "sitting": "sit", "seat": "sit"}
+    STEP_S = 0.14
+
+    def __init__(self, stand_h, sit_h):
+        self.stand_h, self.sit_h, self.files, self.cache = stand_h, sit_h, {}, {}
+        seen = set()
+        for d in ASSET_DIRS:
+            if not os.path.isdir(d): continue
+            for fn in sorted(os.listdir(d)):
+                stem, ext = os.path.splitext(fn)
+                if not stem.lower().startswith("boss") or ext.lower() not in (".png", ".jpg", ".jpeg", ".webp") or fn.lower() in seen: continue
+                seen.add(fn.lower())
+                toks = [t for t in "".join(c if c.isalnum() else " " for c in stem.lower()[4:]).split() if t]
+                dr = next((t for t in toks if t in self.DIRS), "any")
+                pose = next((self.POSE[t] for t in toks if t in self.POSE), "stand")
+                self.files.setdefault((dr, pose), os.path.join(d, fn))
+        if self.files: print("[assets] Boss skin: %d image(s): %s" % (len(self.files), ", ".join(sorted(os.path.basename(v) for v in self.files.values()))))
+
+    def __bool__(self):
+        return bool(self.files)
+
+    def _get(self, dr, pose, mirror=False):
+        path = self.files.get((dr, pose))
+        if not path: return None
+        key = (path, mirror, pose == "sit")
+        if key not in self.cache:
+            try:
+                img = pygame.image.load(path).convert_alpha()
+                h = self.sit_h if pose == "sit" else self.stand_h
+                img = pygame.transform.smoothscale(img, (max(1, round(img.get_width() * h / img.get_height())), h))
+                self.cache[key] = pygame.transform.flip(img, True, False) if mirror else img
+            except (pygame.error, ValueError) as e:
+                print("[assets] could not read %s: %s" % (path, e)); self.cache[key] = None
+        return self.cache[key]
+
+    def image(self, sit, dr, walking, t):
+        if sit:
+            for d in (dr, "any", "back", "front", "right", "left"):
+                img = self._get(d, "sit")
+                if img: return img
+        pose = "stand"
+        if walking and not sit: pose = ("stand", "stepl", "stand", "stepr")[int(t / self.STEP_S) % 4]
+        for p in ((pose, "stand") if pose != "stand" else ("stand",)):
+            img = self._get(dr, p)
+            if img: return img
+            if dr == "left":
+                img = self._get("right", p, mirror=True)
+                if img: return img
+            img = self._get("any", p, mirror=(dr == "left"))   # single picture: flip it when walking left
+            if img: return img
+            if dr == "left":
+                img = self._get("right", p, mirror=True)
+                if img: return img
+        for d in ("front", "any", "right", "back", "left"):
+            img = self._get(d, "stand")
+            if img: return img
+        return None
+
+
 ASSET_DIR = next((d for d in ASSET_DIRS if os.path.isfile(os.path.join(d, "bg.jpg"))), ASSET_DIRS[0])
 
 class PlayerSprite:
@@ -480,6 +546,7 @@ class Game:
               "NOT FOUND (looked in: %s)" % ", ".join(ASSET_DIRS))
         self.spr = PlayerSprite(ASSET_DIR, SPR_H)
         self.npc_img, self.npc_img_sit = self.scaled("npc_stand.png", SPR_H), self.scaled("npc_sit.png", 48)
+        self.boss = BossSprite(SPR_H, 48)                                           # assets/Boss*.png (see BossSprite)
         self.cu_cache = {}
         self.bb_surf = self.make_breadboard()
         self.sw = [False] * 16
@@ -850,6 +917,9 @@ class Game:
             while budget > 0 and n["path"]:
                 tx, ty = n["path"][0]
                 d = math.hypot(tx - n["x"], ty - n["y"])
+                if d > 0.5:                                                  # facing for the Boss skin
+                    ddx, ddy = tx - n["x"], ty - n["y"]
+                    n["dir"] = ("right" if ddx > 0 else "left") if abs(ddx) >= abs(ddy) else ("front" if ddy > 0 else "back")
                 if d <= budget:
                     n["x"], n["y"] = float(tx), float(ty)
                     n["path"].pop(0)
@@ -1336,11 +1406,12 @@ class Game:
             pygame.draw.rect(ui, FORM_COLORS[form], (sx, sy + SPR_H // 3, SPR_W, SPR_H - SPR_H // 3), border_radius=6)
             pygame.draw.circle(ui, (240, 200, 160), (sx + SPR_W // 2, sy + SPR_H // 6), max(6, SPR_W // 3))
 
-    def draw_npc(self, ui):              # optional images: npc_stand.png / npc_sit.png in assets
+    def draw_npc(self, ui):              # skin: assets/Boss*.png (BossSprite), else npc_stand.png / npc_sit.png, else a drawn figure
         n = self.npc
         x, y = int(n["x"]), int(n["y"])
         sit = n["state"] == "sit"
-        img = self.npc_img_sit if sit else self.npc_img
+        img = self.boss.image(sit, n.get("dir", "front"), n["walk"], time.time()) if self.boss else None
+        if img is None: img = self.npc_img_sit if sit else self.npc_img
         if img:
             ui.blit(img, (x - img.get_width() // 2, y - img.get_height() + 4))
             return
