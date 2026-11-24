@@ -721,8 +721,7 @@ class Game:
                     ok,
                     correct_msg=(
                         "Your K-map expression is correct. "
-                        "You have successfully solved Puzzle 2. "
-                        "You can proceed to the next puzzle."
+                        "You can use this to solve the next puzzle."
                     ),
                     wrong_msg=(
                         "Your K-map expression is not correct. "
@@ -789,16 +788,16 @@ class Game:
             elif ev["up"]: self.page = max(0, self.page - 1)
             return
         c = self.p5_cur
-        if ev["up"]:
+        if ev["left"]:
             self.clear_feedback()
             self.p5_cur = (c - 1) % 3
-        elif ev["down"]:
+        elif ev["right"]:
             self.clear_feedback()
             self.p5_cur = (c + 1) % 3
-        elif ev["left"]:
+        elif ev["up"]:
             self.clear_feedback()
             self.p5[c] = (self.p5[c] - 1) % 26
-        elif ev["right"]:
+        elif ev["down"]:
             self.clear_feedback()
             self.p5[c] = (self.p5[c] + 1) % 26
         elif ev["tap"]:
@@ -848,9 +847,14 @@ class Game:
             self.txt(s, l, x, y, font, color); y += lh
         return y
 
-    # ---------------- interaction hint ----------------
+    # ---------------- drawing: world ----------------
+    def camera(self):
+        cx = max(0.0, min(IMG_W - VIEW_W, self.px - VIEW_W / 2))
+        cy = max(0.0, min(IMG_H - VIEW_H, self.py - 60 - VIEW_H / 2))
+        return cx, cy
+
     def draw_interaction_hint(self, ui):
-        """Show a subtle [SEARCH] label above the player near an interactable object."""
+        """Show a subtle [SEARCH] prompt above the player near an interactable object."""
         if self.find_near() is None:
             return
 
@@ -864,20 +868,17 @@ class Game:
         else:
             label_y = player_y - int(SPR_H * ZOOM) - 8
 
-        label = self.f_tiny.render("[SEARCH]", True, (220, 225, 235))
+        label = self.f_tiny.render("[SEARCH]", True, (225, 230, 240))
         label_rect = label.get_rect(center=(player_x, label_y))
 
-        # A faint background keeps the text readable without drawing too much attention.
-        background = pygame.Surface((label_rect.width + 8, label_rect.height + 4), pygame.SRCALPHA)
+        # A faint background keeps the small prompt readable against the room.
+        background = pygame.Surface(
+            (label_rect.width + 8, label_rect.height + 4),
+            pygame.SRCALPHA
+        )
         background.fill((15, 18, 25, 155))
         ui.blit(background, (label_rect.x - 4, label_rect.y - 2))
         ui.blit(label, label_rect)
-
-    # ---------------- drawing: world ----------------
-    def camera(self):
-        cx = max(0.0, min(IMG_W - VIEW_W, self.px - VIEW_W / 2))
-        cy = max(0.0, min(IMG_H - VIEW_H, self.py - 60 - VIEW_H / 2))
-        return cx, cy
 
     def draw_world(self, ui):
         cx, cy = self.camera()
@@ -908,7 +909,7 @@ class Game:
         if not self.lights:
             dk = pygame.Surface((UW, UH)); dk.fill((0, 0, 25)); dk.set_alpha(150); ui.blit(dk, (0, 0))
 
-        # The prompt appears only while the player is close enough to an interactable object.
+        # Show the interaction prompt only while an object is within reach.
         self.draw_interaction_hint(ui)
 
         if self.debug:
@@ -998,7 +999,7 @@ class Game:
         ink = (40, 40, 40)
         if self.page == 0:
             self.txt(s, "SENSOR FAIL LOG   (1 = failed)", 70, 68, self.f_m, ink)
-            self.txt(s, "rows: A B      columns: C D", 70, 94, self.f_s, ink)
+            self.txt(s, "rows: A B    columns: C D    Do it in terms of SOP", 70, 94, self.f_s, ink)
             self.draw_kmap(s, 70, 122, 52, ink)
             self.txt(s, "F =", 400, 230, self.f_l, ink)
             st = pygame.Surface((150, 110), pygame.SRCALPHA)
@@ -1016,7 +1017,7 @@ class Game:
         self.txt(s, "SW7-4: which letters (A B C D)", 310, 290, self.f_s, ink)
         self.txt(s, "SW3-0: 1 = plain, 0 = inverted", 310, 312, self.f_s, ink)
         if self.done[1]: self.txt(s, "LOGGED: F = %s" % self.p2_eq, 70, 380, self.f_m, (30, 80, 160))
-        return "BTND/BTCU slot | BTNC store | BTNR confirm answer"
+        return "BTND/BTNU slot | BTNC store | BTNR confirm answer"
 
     def cu_nand(self, s):
         pygame.draw.rect(s, (10, 20, 10), (40, 60, 560, 360), border_radius=6)
