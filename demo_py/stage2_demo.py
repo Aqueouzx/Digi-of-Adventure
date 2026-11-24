@@ -8,8 +8,12 @@
 import copy, itertools, math, os, sys, time
 from collections import deque
 import pygame
-import card_assets
 
+try:
+    import card_assets                               # card pictures (demo_py/card_assets.py + assets/); optional
+except ImportError:
+    card_assets = None
+    print("[assets] card_assets.py not found next to this file -> plain cards")
 
 SCR_W, SCR_H, PANEL_H = 1152, 648, 112      # window: game area 16:9 + virtual board panel
 UW, UH = 960, 540                           # internal UI surface (16:9), scaled up to the window
@@ -60,7 +64,6 @@ class PlayerSprite:
         self.h, self.cache = height, {}
         self.dir, self.t = "front", 0.0
         self.moving = False
-        
 
     def reset(self):
         self.dir, self.t, self.moving = "front", 0.0, False
@@ -116,7 +119,7 @@ PART_LABEL = {k: n for k, n, _ in PARTS}
 PART_SHORT = {"not": "74HC04", "and": "74HC08", "or": "74HC32", "seg": "7-seg", "dip": "DIP sw", "r10k": "10k",
               "r220": "220 ohm", "bb": "Breadboard", "psu": "DC supply"}
 TOTAL_PARTS = sum(PART_QTY.values())             # 18
-CARD2_AT = 9                                     # card round 2 appears when half of the parts are found
+CARD2_AT, CARD3_AT = 8, 18                       # card rounds: 1 at the start, 2 when 8 parts are found, 3 when all 18 are found
 
 
 R_ITEM, R_OBJ = 50, 70                        # how close (px) you must stand to the spot's walkable point
@@ -421,7 +424,7 @@ SKILL_BTN = pygame.Rect(UW - 160, 50, 146, 28)   # on-screen skill button (map v
 # While your feet are in that lane, everything below the partition's top edge is covered by the room picture.
 ROW_LANES = [(322, 636, 198, 186), (284, 656, 288, 270), (272, 690, 412, 413)]
 LANE_H = 24
-ZOOM_SECS, ZOOM_MAX = 1.5, 2.6                   # camera zoom when a part is found
+ZOOM_SECS, ZOOM_MAX = 2.2, 2.6                   # camera zoom when a part is found
 
 
 def draw_set(scr, on, x, y, w, h, off=(50, 22, 22)):
@@ -464,21 +467,6 @@ def wire_pts(a, b):
 
 
 class Game:
-    # ---- demo hub interface (only used by demo_hub.py) ----
-    CHECKPOINTS = [
-        ("start", "Start of stage (card round 1)"),
-        ("r2", "9/18 parts found (card round 2)"),
-        ("parts", "All 18 parts found (ready to wire)"),
-        ("r3", "2/3 QA passed (card round 3)"),
-        ("door", "All 3 QA passed (door unlocked)"),
-        ("clear", "Stage 2 cleared"),
-    ]
-    ACTIONS = [
-        ("auto_wire", "Auto-wire breadboard (correct)"),
-        ("skill_ready", "Charge Workshop-shirt skill"),
-        ("armor", "Give 1 Armor"),
-    ]
-    
     def __init__(self):
         self.f_tiny = pygame.font.Font(None, 15)
         self.f_s = pygame.font.Font(None, 20)
@@ -508,11 +496,8 @@ class Game:
         for o in OBJS + [NPC_OBJ] + ITEM_SPOTS + HINT_SPOTS:
             self.set_anchor(o)
         self.reset_stage(True)
-        self.card_art = card_assets.CardAssets(ASSET_DIR, (170, 170))
-        self.debug = False
-        self.show_help = True
-        self.standalone = True          # <-- เพิ่มบรรทัดนี้ (demo_hub จะปรับเป็น False เอง)
-        self.form = 1
+        self.card_art = card_assets.CardAssets(ASSET_DIR, (170, 170)) if card_assets else None
+        self.standalone = True          # demo_hub sets this to False when it runs the game
 
     def make_breadboard(self):
         s = pygame.Surface((928, 384))
@@ -740,12 +725,13 @@ class Game:
         self.deck = {"active": True, "round": r, "perm": PERMS[self.lfsr_pick(6)], "cursor": 1, "face": None}
         self.r_run[r] = True
 
-    def card_trigger(self):              # round 1: start | round 2: half the parts found | round 3: 2 QA tests cleared
+    def card_trigger(self):              # round 1: start | round 2: 8 parts found | round 3: all 18 parts found
         if self.deck["active"]:
             return
         if not self.r_run[1]: self.card_start(1)
+        elif self.zoom: return                                      # wait until the found-part zoom has finished
         elif self.r_done[1] and not self.r_run[2] and self.parts_total() >= CARD2_AT: self.card_start(2)
-        elif self.r_done[2] and not self.r_run[3] and self.rnd >= 2: self.card_start(3)
+        elif self.r_done[2] and not self.r_run[3] and self.parts_total() >= CARD3_AT: self.card_start(3)
 
     def cards_input(self, ev):
         d = self.deck
@@ -780,7 +766,7 @@ class Game:
     def pickup(self, sp):
         self.done_spots.add(sp.id)
         self.found[sp.part] += 1
-        self.zoom = {"t": 0.0, "x": sp.ix, "y": sp.iy}      # camera zooms to the spot
+        self.zoom = {"t": 0.0, "x": sp.ix, "y": sp.iy, "part": sp.part}      # camera zooms to the spot
         left = TOTAL_PARTS - self.parts_total()
         self.notes.append("Found %s (%s)" % (PART_SHORT[sp.part], sp.name))
         self.say("Found: %s  (%d/%d)" % (PART_LABEL[sp.part], self.found[sp.part], PART_QTY[sp.part]))
@@ -1041,7 +1027,9 @@ class Game:
         if self.talk: self.talk_input(ev); return
         if self.cutscene: return
         self.play_t += dt                                           # play time since the Boss sat down
-        if self.zoom: return                                        # short camera zoom on the part you just found
+        if self.zoom:                                               # camera zoom on the part you just found (Space skips it)
+            if ev["tap"] and self.zoom["t"] > 0.8: self.zoom = None
+            return
         if press: self.try_skill()
         if self.hint_popup:
             if ev["tap"] or ev["back"]: self.hint_popup = None
@@ -1644,12 +1632,13 @@ class Game:
             else:
                 fb_col = CAREERS[self.career][1] if self.career is not None else (80, 85, 100)
 
-            drew_img = self.card_art.draw_card(
-                s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col
-            )
+            drew_img = False
+            if self.card_art:                                   # card pictures from demo_py/card_assets.py + assets/
+                drew_img = self.card_art.draw_card(s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col)
+            else:
+                pygame.draw.rect(s, fb_col, r, border_radius=10)
 
-            # Fallback ข้อความกรณีหารูปไม่เจอ
-            if not drew_img:
+            if not drew_img:                                    # no picture found: plain card with text
                 if d["round"] == 1:
                     if revealed:
                         self.ctxt(s, CAREERS[idx][0], r.centerx, r.y + 60, self.f_m)
@@ -1661,8 +1650,7 @@ class Game:
                         self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
                     if revealed:
                         self.ctxt(s, item_name, r.centerx, r.y + 120, self.f_s)
-            # ถ้ามีรูปแล้ว และเป็นรอบ 2+ ที่เปิดการ์ด ให้แสดงชื่อไอเทมบนแถบดำโปร่งใส
-            elif revealed and d["round"] > 1:
+            elif revealed and d["round"] > 1:                   # picture + round 2/3: item name on a dark strip
                 tag = pygame.Surface((r.w, 34), pygame.SRCALPHA)
                 tag.fill((0, 0, 0, 180))
                 s.blit(tag, (r.x, r.bottom - 42))
@@ -1679,7 +1667,7 @@ class Game:
             self.ctxt(s, "BTNC: continue", 320, 420, self.f_m, (170, 200, 255))
         else:
             self.ctxt(s, "L/R choose   BTNC pick", 320, 360, self.f_m, (170, 200, 255))
-    
+
     def draw_inventory(self, s):
         self.draw_box(s, pygame.Rect(90, 80, 460, 340))
         self.ctxt(s, "INVENTORY  (SW15 / key I to close)", 320, 94, self.f_m)
@@ -1806,6 +1794,72 @@ class Game:
                  360, y0 + 94, self.f_tiny, (170, 170, 190))
         self.txt(scr, "Form: %s" % FORM_NAMES[self.look()], 14, y0 + 98, self.f_tiny, (140, 140, 160))
 
+    def part_icon(self, key):            # optional picture assets/part_<key>.png (e.g. part_not.png); otherwise a drawn icon
+        if key not in self.cu_cache or ("icon", key) not in self.cu_cache:
+            img = load_img("part_%s.png" % key)
+            if img: img = pygame.transform.smoothscale(img, (max(1, round(img.get_width() * 96 / img.get_height())), 96))
+            self.cu_cache[("icon", key)] = img
+        return self.cu_cache[("icon", key)]
+
+    def draw_part_icon(self, ui, key, cx, cy):          # drawn pictures of the 9 kinds of parts, centred at (cx, cy)
+        img = self.part_icon(key)
+        if img:
+            ui.blit(img, (cx - img.get_width() // 2, cy - img.get_height() // 2)); return
+        if key in ("not", "and", "or"):                 # DIP-14 chip
+            pygame.draw.rect(ui, (32, 33, 40), (cx - 50, cy - 22, 100, 44), border_radius=4)
+            for i in range(7):
+                for yy in (cy - 31, cy + 22):
+                    pygame.draw.rect(ui, (190, 190, 198), (cx - 44 + i * 14, yy, 6, 9))
+            pygame.draw.circle(ui, (14, 14, 18), (cx - 50, cy), 6)
+            self.ctxt(ui, PART_SHORT[key], cx + 2, cy - 7, self.f_s, (220, 225, 235))
+        elif key == "seg":
+            pygame.draw.rect(ui, (12, 12, 16), (cx - 34, cy - 46, 68, 92), border_radius=6)
+            draw_set(ui, "abcdefg", cx - 20, cy - 34, 40, 68, (60, 26, 28))
+        elif key == "dip":
+            pygame.draw.rect(ui, (36, 84, 190), (cx - 40, cy - 34, 80, 68), border_radius=4)
+            for i in range(3):
+                pygame.draw.rect(ui, (16, 40, 100), (cx - 28, cy - 22 + i * 18, 56, 12), border_radius=3)
+                pygame.draw.rect(ui, (245, 245, 250), (cx - 28 + (28 if i == 1 else 0), cy - 22 + i * 18, 26, 12), border_radius=3)
+        elif key in ("r10k", "r220"):
+            bands = [(150, 90, 40), (20, 20, 20), (235, 120, 30)] if key == "r10k" else [(200, 40, 40), (200, 40, 40), (150, 90, 40)]
+            pygame.draw.line(ui, (170, 170, 175), (cx - 58, cy), (cx + 58, cy), 4)
+            pygame.draw.rect(ui, (214, 180, 120), (cx - 34, cy - 14, 68, 28), border_radius=12)
+            for i, col in enumerate(bands): pygame.draw.rect(ui, col, (cx - 22 + i * 16, cy - 14, 7, 28))
+        elif key == "bb":
+            pygame.draw.rect(ui, (226, 222, 208), (cx - 56, cy - 36, 112, 72), border_radius=4)
+            for x in range(cx - 50, cx + 52, 9):
+                for y in range(cy - 30, cy + 32, 9): ui.fill((170, 166, 152), (x, y, 3, 3))
+            for col, (a, b) in (((220, 60, 60), (-30, 20)), ((60, 90, 220), (0, 40)), ((70, 190, 90), (28, -10))):
+                pygame.draw.lines(ui, col, False, [(cx + a, cy - 8), (cx + a, cy - 30), (cx + b, cy - 30), (cx + b, cy + 4)], 3)
+        else:                                           # psu
+            pygame.draw.rect(ui, (70, 74, 84), (cx - 56, cy - 34, 112, 68), border_radius=6)
+            pygame.draw.rect(ui, (10, 30, 14), (cx - 44, cy - 24, 64, 24), border_radius=3)
+            self.txt(ui, "5.00V", cx - 40, cy - 20, self.f_s, (90, 255, 110))
+            pygame.draw.circle(ui, (210, 50, 50), (cx + 34, cy - 12), 7)
+            pygame.draw.circle(ui, (30, 30, 36), (cx + 34, cy + 14), 7)
+
+    def draw_found_card(self, ui):       # "FOUND!" card with a picture of the part, shown during the zoom
+        z = self.zoom
+        if not z: return
+        k = z["t"] / ZOOM_SECS
+        if k < 0.18: return
+        f = 1.0 + (ZOOM_MAX - 1.0) * min(1.0, max(0.0, k / 0.25 if k < 0.5 else (1.0 - k) / 0.25))
+        sy = (z["y"] - min(max(z["y"] - UH / f / 2, 0), UH - UH / f)) * f         # where the part is on screen now
+        w, h = 300, 190
+        r = pygame.Rect(UW // 2 - w // 2, 330 if sy < UH * 0.5 else 70, w, h)
+        a = int(255 * min(1.0, (k - 0.18) / 0.1, (1.0 - k) / 0.1))
+        card = pygame.Surface((w, h), pygame.SRCALPHA)
+        pygame.draw.rect(card, (14, 18, 28, 235), (0, 0, w, h), border_radius=12)
+        pygame.draw.rect(card, (255, 230, 120), (0, 0, w, h), 3, border_radius=12)
+        self.ctxt(card, "FOUND!", w // 2, 10, self.f_l, (255, 230, 120))
+        pygame.draw.rect(card, (30, 36, 52), (w // 2 - 80, 46, 160, 90), border_radius=8)
+        self.draw_part_icon(card, z["part"], w // 2, 91)
+        self.ctxt(card, PART_LABEL[z["part"]], w // 2, 142, self.f_m)
+        self.ctxt(card, "%d / %d   |   Parts %d / %d" % (self.found[z["part"]], PART_QTY[z["part"]], self.parts_total(), TOTAL_PARTS),
+                  w // 2, 166, self.f_s, (150, 255, 170))
+        card.set_alpha(a)
+        ui.blit(card, r.topleft)
+
     def apply_zoom(self, ui):            # camera pushes in on the part you just found, then pulls back out
         z = self.zoom
         if not z: return
@@ -1826,6 +1880,7 @@ class Game:
         else:
             self.draw_world(ui)
             self.apply_zoom(ui)
+            self.draw_found_card(ui)
         self.draw_hud(ui)
         self.draw_skill_btn(ui)
         if self.sw[14]: self.draw_notebook(s)

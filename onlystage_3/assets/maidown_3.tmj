@@ -1,0 +1,32 @@
+{ "compressionlevel":-1,
+ "height":1,
+ "infinite":false,
+ "layers":[
+        {
+         "data":[1, 2147483649],
+         "height":1,
+         "id":1,
+         "name":"Tile Layer 1",
+         "opacity":1,
+         "type":"tilelayer",
+         "visible":true,
+         "width":2,
+         "x":0,
+         "y":0
+        }],
+ "nextlayerid":2,
+ "nextobjectid":1,
+ "orientation":"orthogonal",
+ "renderorder":"right-down",
+ "tiledversion":"1.12.2",
+ "tileheight":640,
+ "tilesets":[
+        {
+         "firstgid":1,
+         "source":"..\/..\/..\/obby_digital\/\u0e14\u0e48\u0e32\u0e19\u0e17\u0e35\u0e48 3\/tiled\/maidown_3.tsx"
+        }],
+ "tilewidth":640,
+ "type":"map",
+ "version":"1.10",
+ "width":2
+}
