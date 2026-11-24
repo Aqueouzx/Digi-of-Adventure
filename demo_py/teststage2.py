@@ -185,6 +185,7 @@ PART_LABEL = {k: n for k, n, _ in PARTS}
 PART_SHORT = {"not": "74HC04", "and": "74HC08", "or": "74HC32", "seg": "7-seg", "dip": "DIP sw", "r10k": "10k",
               "r220": "220 ohm", "bb": "Breadboard", "psu": "DC supply"}
 TOTAL_PARTS = sum(PART_QTY.values())             # 18
+CARD_BOX, CARD_CY = (170, 190), 180                  # card pictures are fitted into this box (never stretched), centre y
 CARD2_AT, CARD3_AT = 8, 18                       # card rounds: 1 at the start, 2 when 8 parts are found, 3 when all 18 are found
 
 
@@ -563,7 +564,7 @@ class Game:
         for o in OBJS + [NPC_OBJ] + ITEM_SPOTS + HINT_SPOTS:
             self.set_anchor(o)
         self.reset_stage(True)
-        self.card_art = card_assets.CardAssets(ASSET_DIR, (170, 170)) if card_assets else None
+        self.card_art = card_assets.CardAssets(ASSET_DIR) if card_assets else None
         self.standalone = True          # demo_hub sets this to False when it runs the game
 
     def make_breadboard(self):
@@ -1719,13 +1720,19 @@ class Game:
             else:
                 fb_col = CAREERS[self.career][1] if self.career is not None else (80, 85, 100)
 
-            drew_img = False
-            if self.card_art:                                   # card pictures from demo_py/card_assets.py + assets/
-                drew_img = self.card_art.draw_card(s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col)
-            else:
+            img = None
+            if self.card_art:                                   # every round: face-down back first, the picked card flips to its face
+                if d["round"] == 1 or revealed:
+                    img = self.card_art.get_image(d["round"], self.career, pos, revealed, slot_idx=idx)
+                elif self.career is not None:
+                    img = self.card_art.get_r1_back(self.career)
+            if img:                                             # picture from assets/ (card_assets.py): keep its own proportions
+                k = min(1.0, CARD_BOX[0] / img.get_width(), CARD_BOX[1] / img.get_height())
+                if k < 1.0: img = pygame.transform.smoothscale(img, (max(1, round(img.get_width() * k)), max(1, round(img.get_height() * k))))
+                r = img.get_rect(center=(r.centerx, CARD_CY))
+                s.blit(img, r.topleft)
+            else:                                               # no picture found: plain card with text
                 pygame.draw.rect(s, fb_col, r, border_radius=10)
-
-            if not drew_img:                                    # no picture found: plain card with text
                 if d["round"] == 1:
                     if revealed:
                         self.ctxt(s, CAREERS[idx][0], r.centerx, r.y + 60, self.f_m)
@@ -1733,15 +1740,11 @@ class Game:
                     else:
                         self.ctxt(s, "?", r.centerx, r.y + 90, self.f_l, (200, 200, 200))
                 else:
-                    if self.career is not None:
-                        self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
                     if revealed:
+                        if self.career is not None: self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
                         self.ctxt(s, item_name, r.centerx, r.y + 120, self.f_s)
-            elif revealed and d["round"] > 1:                   # picture + round 2/3: item name on a dark strip
-                tag = pygame.Surface((r.w, 34), pygame.SRCALPHA)
-                tag.fill((0, 0, 0, 180))
-                s.blit(tag, (r.x, r.bottom - 42))
-                self.ctxt(s, item_name, r.centerx, r.bottom - 34, self.f_s, (255, 230, 120))
+                    else:
+                        self.ctxt(s, "?", r.centerx, r.y + 90, self.f_l, (200, 200, 200))
 
             if d["face"] is None and pos == d["cursor"]:
                 pygame.draw.rect(s, (255, 255, 255), r.inflate(10, 10), 4, border_radius=12)
