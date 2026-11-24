@@ -7,7 +7,7 @@ import sys, os
 
 # 1. ตั้งค่า Path ให้เรียกใช้งานโมดูลข้ามโฟลเดอร์ได้
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-STAGE3_PATH = os.path.join(PROJECT_ROOT, "Only_Stage_3")
+STAGE3_PATH = os.path.join(PROJECT_ROOT, "onlystage_3")
 
 for path in [PROJECT_ROOT, STAGE3_PATH]:
     if path not in sys.path:
@@ -15,7 +15,7 @@ for path in [PROJECT_ROOT, STAGE3_PATH]:
 
 # 2. นำเข้า settings ในชื่อ C (แก้ปัญหาวัดค่า C ไม่เจอ)
 try:
-    import Only_Stage_3.settings as C
+    import onlystage_3.settings as C
 except ModuleNotFoundError:
     import settings as C
 
