@@ -2,8 +2,8 @@ from collections import deque
 from dataclasses import dataclass
 from math import ceil, sqrt
 import random
-import Only_Stage_3.settings as C
-from Only_Stage_3.level import Box
+import onlystage_3.settings as C
+from onlystage_3.level import Box
 
 G = 8*C.JUMP_HEIGHT/C.JUMP_TIME**2
 EPS = 1e-7

@@ -15,7 +15,7 @@ for path in [PROJECT_ROOT, STAGE3_PATH]:
 
 # 2. นำเข้า settings ในชื่อ C (แก้ปัญหาวัดค่า C ไม่เจอ)
 try:
-    import Only_Stage_3.settings as C
+    import onlystage_3.settings as C
 except ModuleNotFoundError:
     import settings as C
 

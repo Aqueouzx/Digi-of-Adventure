@@ -2,7 +2,7 @@
 from functools import partial
 import tkinter as tk
 
-import Only_Stage_3.settings as C
+import onlystage_3.settings as C
 from demo_py.stage3_demo import App
 
 

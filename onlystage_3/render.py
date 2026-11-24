@@ -1,10 +1,10 @@
 from functools import lru_cache
 from math import sin, cos, tau
 from PIL import Image, ImageDraw, ImageFont
-import Only_Stage_3.settings as C
-import Only_Stage_3.hud as hud
-import Only_Stage_3.winter_art as winter_art
-from Only_Stage_3.level import picture, Level
+import onlystage_3.settings as C
+import onlystage_3.hud as hud
+import onlystage_3.winter_art as winter_art
+from onlystage_3.level import picture, Level
 
 S = 32
 CREAM, INK, GOLD = "#fff0ce", "#3e2c46", "#efbe65"

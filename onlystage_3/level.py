@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from PIL import Image
-import Only_Stage_3.settings as cfg
+import onlystage_3.settings as cfg
 
 @dataclass(frozen=True)
 class Box:

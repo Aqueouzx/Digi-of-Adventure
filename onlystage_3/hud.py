@@ -5,8 +5,8 @@ from pathlib import Path
 import os
 import re
 from PIL import Image, ImageDraw, ImageFont
-import Only_Stage_3.settings as C
-from Only_Stage_3.pixel_type import title
+import onlystage_3.settings as C
+from onlystage_3.pixel_type import title
 
 NIGHT="#08283d"
 IVORY="#e7faff"
