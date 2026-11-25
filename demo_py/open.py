@@ -1,4 +1,4 @@
-"""Opening scene: assets/1.jpg ... 6.jpg, one click -> next picture.
+"""Opening scene: assets/title.png followed by assets/1.jpg ... 6.jpg.
 Run alone:  python open.py        (click / Space / Enter / Right = next, Left / Backspace = back, Esc = skip)
 From demo_hub:  scene = Opening(); scene.start(); every frame: scene.update(dt, pygame.event.get()); scene.draw(screen)
                 when scene.exit_requested is True -> go to the next scene (Stage 1)."""
@@ -6,12 +6,22 @@ import os, sys
 import pygame
 
 W, H = 960, 540
+TITLE_NAME = "title"                            # looks for title.png / .jpg / .jpeg / .webp in assets/
 ENTER_BTN = pygame.Rect(0, 0, 250, 54)          # "ENTER THE ROOM" button on the last picture (centre of the doorway)
 ENTER_BTN.center = (506, 405)
 FADE_S = 0.45                                   # cross-fade time between pictures
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ASSET_DIRS = [os.path.join(os.path.dirname(_HERE), "assets"), os.path.join(_HERE, "assets"), _HERE,
               os.path.join(os.getcwd(), "assets"), os.getcwd()]
+
+
+def find_title():
+    for d in ASSET_DIRS:
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            p = os.path.join(d, TITLE_NAME + ext)
+            if os.path.isfile(p):
+                return p
+    return None
 
 
 def find_pages(max_n=99):
@@ -29,10 +39,11 @@ def find_pages(max_n=99):
     return pages
 
 
-def fit(img, w=W, h=H):                         # whole picture visible, black bars if the ratio differs
+def fit(img, w=W, h=H, smooth=True):            # whole picture visible, black bars if the ratio differs
     iw, ih = img.get_size()
     k = min(w / iw, h / ih)
-    out = pygame.transform.smoothscale(img, (max(1, round(iw * k)), max(1, round(ih * k))))
+    scale_fn = pygame.transform.smoothscale if smooth else pygame.transform.scale
+    out = scale_fn(img, (max(1, round(iw * k)), max(1, round(ih * k))))
     s = pygame.Surface((w, h)); s.fill((0, 0, 0))
     s.blit(out, ((w - out.get_width()) // 2, (h - out.get_height()) // 2))
     return s
@@ -42,10 +53,21 @@ class Opening:
     def __init__(self):
         self.standalone = True
         self.pages = []
+        self.has_title = False
+
+        tp = find_title()
+        if tp:
+            try:
+                self.pages.append(fit(pygame.image.load(tp).convert(), smooth=False))
+                self.has_title = True
+            except pygame.error as e:
+                print("[open] could not read %s: %s" % (tp, e))
+
         for p in find_pages():
             try: self.pages.append(fit(pygame.image.load(p).convert()))
             except pygame.error as e: print("[open] could not read %s: %s" % (p, e))
-        if not self.pages: print("[open] no 1.jpg ... found in", ASSET_DIRS[0])
+
+        if not self.pages: print("[open] no title.png or 1.jpg ... found in", ASSET_DIRS[0])
         self.font = pygame.font.Font(None, 26)
         self.f_btn = pygame.font.Font(None, 36)
         self.go_stage1 = False
@@ -56,18 +78,23 @@ class Opening:
         self.exit_requested = self.go_stage1 = False
         self.hover = False
 
+    def is_title(self):
+        return self.has_title and self.i == 0
+
     def next(self):
         if self.fade < 1.0:                     # click during a fade -> finish it first
             self.fade = 1.0; return
-        if self.i + 1 >= len(self.pages):            # last picture: only the ENTER button (or Space / Enter) goes on
+        if self.is_title() and len(self.pages) == 1:
+            self.enter(); return
+        if self.i + 1 >= len(self.pages):       # last picture: only the ENTER button (or Space / Enter) goes on
             return
         self.prev, self.i, self.fade = self.i, self.i + 1, 0.0
 
     def enter(self):
-        self.go_stage1 = self.exit_requested = True   # demo_hub: when exit_requested -> start Stage 1
+        self.go_stage1 = self.exit_requested = True
 
     def on_last(self):
-        return bool(self.pages) and self.i == len(self.pages) - 1 and self.fade >= 1.0
+        return bool(self.pages) and not self.is_title() and self.i == len(self.pages) - 1 and self.fade >= 1.0
 
     def back(self):
         if self.i > 0: self.prev, self.i, self.fade = self.i, self.i - 1, 0.0
@@ -101,6 +128,10 @@ class Opening:
             screen.blit(self.pages[self.prev], (0, 0))
             cur = cur.copy(); cur.set_alpha(int(255 * self.fade))
         screen.blit(cur, (0, 0))
+
+        if self.is_title():
+            return
+
         last = self.i == len(self.pages) - 1
         if last:
             if self.fade >= 1.0:
@@ -116,13 +147,15 @@ class Opening:
             s = self.font.render("click to continue", True, (255, 255, 255)); sh = self.font.render("click to continue", True, (0, 0, 0))
             x, y = W - s.get_width() - 18, H - 30
             screen.blit(sh, (x + 2, y + 2)); screen.blit(s, (x, y))
-        n = self.font.render("%d / %d" % (self.i + 1, len(self.pages)), True, (230, 230, 230))
+
+        offset = 1 if self.has_title else 0
+        n = self.font.render("%d / %d" % (self.i + 1 - offset, len(self.pages) - offset), True, (230, 230, 230))
         screen.blit(n, (16, H - 30))
 
 
 def main():
     pygame.init()
-    pygame.display.set_caption("CPE Escape - Opening")
+    pygame.display.set_caption("Digi of Adventure - Opening")
     try: screen = pygame.display.set_mode((W, H), pygame.SCALED | pygame.RESIZABLE)
     except pygame.error: screen = pygame.display.set_mode((W, H))
     scene, clock = Opening(), pygame.time.Clock()
@@ -132,7 +165,7 @@ def main():
         scene.draw(screen)
         pygame.display.flip()
     if scene.go_stage1:
-        print("[open] ENTER THE ROOM clicked -> Stage 1 (not linked yet)")
+        print("[open] ENTER THE ROOM clicked -> Stage 1")
     pygame.quit()
 
 
