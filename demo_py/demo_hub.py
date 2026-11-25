@@ -23,6 +23,7 @@ import pygame
 DEMO_MENU = True                     # False = hub works but no menu is drawn
 REGISTRY = [                         # (tab label, python module, class name) - edit to match your files
     ("Stage 1", "stage1_demo", "Game"),
+    ("Cutscene 1-2", "cutscene_1_2", "Game"),
     ("Stage 2", "stage2_demo", "Game"),
     ("Stage 3", "stage3_demo", "Game"),
 ]
