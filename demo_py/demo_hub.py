@@ -85,7 +85,7 @@ class Hub:
     # ---------- menu ----------
 
     def menu_items(self):
-        x0, w = WINDOW[0] - 372, 360
+        x0, w = WINDOW[0] - 402, 390
         items, y = [], 54
 
         def row(entries, h=28):
@@ -98,8 +98,12 @@ class Hub:
 
         g = self.games[self.cur]
         row([("head", "DEMO TOOLS", None, False, True)], 26)
-        row([("tab", REGISTRY[i][0], (lambda i=i: self.select(i)), i == self.cur, self.games[i] is not None)
-             for i in range(len(REGISTRY))], 32)
+        tabs = [
+            ("tab", REGISTRY[i][0], (lambda i=i: self.select(i)), i == self.cur, not self.errors[i])
+            for i in range(len(REGISTRY))
+        ]
+        for start in range(0, len(tabs), 3):
+            row(tabs[start:start + 3], 30)
         if g:
             cps = getattr(g, "CHECKPOINTS", [])
             if cps:
@@ -124,6 +128,7 @@ class Hub:
         row([("sub", "F10 or the menu button", None, False, True)], 20)
         self.panel = pygame.Rect(x0, 46, w, y - 46 + 6)
         return items
+
 
     def close(self):
         self.open = False
@@ -197,6 +202,13 @@ class Hub:
                     pygame.draw.lines(screen, GREEN, False,
                                       [(box.x + 3, box.y + 9), (box.x + 7, box.y + 13), (box.x + 15, box.y + 4)], 3)
                 screen.blit(f.render(text, True, TXT if on else (190, 190, 205)), (r.x + 32, r.y + 6))
+            elif kind in ("tab", "button"):
+                col = (70, 90, 150) if on else ((60, 64, 86) if hover else (40, 44, 60))
+                pygame.draw.rect(screen, col, r, border_radius=6)
+                img = f.render(text, True, TXT if en else (90, 90, 100))
+                if img.get_width() > r.w - 8:
+                    img = pygame.transform.smoothscale(img, (r.w - 8, img.get_height()))
+                screen.blit(img, (r.centerx - img.get_width() // 2, r.centery - img.get_height() // 2))
 
     def draw_missing(self, screen, fonts):
         screen.fill(BG)
