@@ -1,8 +1,16 @@
 """Place beside main.py and run: python owner_mode.py"""
+import sys, os
 from functools import partial
 import tkinter as tk
 
-import onlystage_3.settings as C
+# ดึงโฟลเดอร์หลักขึ้นมาเพื่อให้ Python มองเห็นทั้ง demo_py และ onlystage_3
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+try:
+    import onlystage_3.settings as C
+except ModuleNotFoundError:
+    import settings as C
+
 from demo_py.stage3_demo import App
 
 

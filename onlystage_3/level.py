@@ -5,8 +5,15 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from pathlib import PureWindowsPath
 from PIL import Image
-import onlystage_3.settings as cfg
+
+try:
+    import onlystage_3.settings as cfg
+except ModuleNotFoundError:
+    import settings as cfg
+
+C = cfg
 
 @dataclass(frozen=True)
 class Box:
@@ -60,7 +67,7 @@ def read_tsx(path):
     return out
 
 def landmark_image(folder):
-    for path in (folder/"N17.png",cfg.ASSETS/"N17.png"):
+    for path in (folder/"N17.png", cfg.ASSETS/"N17.png"):
         if path.is_file():
             return path.resolve()
     raise FileNotFoundError("N17: put your N17.png in assets/tiled/ or assets/, "
@@ -78,7 +85,7 @@ class Tileset:
         elif "image" in data:
             image_path = folder / data["image"]
             if landmark and name.upper()=="N16" and not image_path.is_file():
-                image_path = next((p for p in (folder/"N16.png",cfg.ASSETS/"N16.png") if p.is_file()),image_path)
+                image_path = next((p for p in (folder/"N16.png", cfg.ASSETS/"N16.png") if p.is_file()), image_path)
             elif landmark and not image_path.is_file():
                 image_path = landmark_image(folder)
             self.atlas = picture(image_path)
@@ -95,18 +102,17 @@ class Tileset:
             img = Image.new("RGBA",(32,32))
         else:
             w,h = d["tilewidth"], d["tileheight"]
-            margin,spacing = d.get("margin",0),d.get("spacing",0)
+            margin,spacing = d.get("margin",0), d.get("spacing",0)
             x = margin + (num%d["columns"])*(w+spacing)
             y = margin + (num//d["columns"])*(h+spacing)
             bounds = (x,y,x+w,y+h)
             if self.landmark:
-                # Tile IDs address the original Tiled grid even if the PNG was resized.
                 cols = d["columns"]
                 rows = ceil(d["tilecount"]/cols)
                 ref_w = max(d.get("imagewidth",0), 2*margin+cols*w+(cols-1)*spacing)
                 ref_h = max(d.get("imageheight",0), 2*margin+rows*h+(rows-1)*spacing)
-                sx,sy = self.atlas.width/ref_w,self.atlas.height/ref_h
-                bounds = (round(x*sx),round(y*sy),round((x+w)*sx),round((y+h)*sy))
+                sx,sy = self.atlas.width/ref_w, self.atlas.height/ref_h
+                bounds = (round(x*sx), round(y*sy), round((x+w)*sx), round((y+h)*sy))
             img = self.atlas.crop(bounds)
         img = img.resize((32,32), Image.Resampling.NEAREST)
         for bit, op in [(0x20000000,Image.Transpose.TRANSPOSE),(0x80000000,Image.Transpose.FLIP_LEFT_RIGHT),
@@ -146,7 +152,6 @@ class Level:
                 source = path.parent / ref["source"] if "source" in ref else path
                 landmark = source.stem.upper() in ("N16","N17")
                 if path.name=="map_1.tmj" and source.stem.endswith("_1") and not source.is_file():
-                    # Each of the numbered terrain tilesets in this TMJ has just one tile.
                     tile = source.with_suffix(".png")
                     if not tile.is_file():
                         tile = cfg.ASSETS/tile.name
@@ -164,12 +169,11 @@ class Level:
                 elif source.stem.endswith("_3") and not source.is_file():
                     name = source.stem
                     equivalent = "konmai_2" if name in ("mai_3","maidown_3") else name[:-2]+"_2"
-                    paths = (source.with_suffix(".png"),cfg.ASSETS/(name+".png"),
+                    paths = (source.with_suffix(".png"), cfg.ASSETS/(name+".png"),
                              source.with_name(equivalent+".png"))
-                    tile = next((p for p in paths if p.is_file()),paths[0])
+                    tile = next((p for p in paths if p.is_file()), paths[0])
                     meta = dict(name=name,tiles=[dict(id=0,image=str(tile.resolve()))])
                 elif landmark and not source.is_file():
-                    # map_2(1).tmj references rows 2–7 of its original 8-by-8 atlas.
                     meta = dict(name="N17",image=str(landmark_image(source.parent)),
                                 columns=8,tilecount=64,tilewidth=640,tileheight=640)
                 elif source == path:
@@ -178,6 +182,33 @@ class Level:
                     meta = read_tsx(source)
                 else:
                     meta = json.loads(source.read_text(encoding="utf-8-sig"))
+
+                if path.name in (Path(C.MAPS[3]).name, "mai_3.tmj", "maidown_3.tmj"):
+                    project = Path(__file__).resolve().parent
+                    search_root = next(
+                        (folder for folder in (project, *project.parents)
+                         if folder.name.casefold() == "onlystage_3"),
+                        project,
+                    )
+
+                    matches = [
+                        file.parent
+                        for file in search_root.rglob("konmai1_3.png")
+                        if file.is_file()
+                    ]
+
+                    if matches:
+                        photo = matches[0]
+                        if "image" in meta:
+                            meta["image"] = str(photo / PureWindowsPath(meta["image"]).name)
+
+                        for tile in meta.get("tiles", []):
+                            if "image" in tile:
+                                name = PureWindowsPath(tile["image"]).name
+                                if not source.is_file() and source.stem.endswith("_3"):
+                                    name = source.stem + ".png"
+                                tile["image"] = str(photo / name)
+
                 art = Tileset(meta, source.parent, landmark)
                 role = cfg.TILESET_KIND.get(source.stem, cfg.TILESET_KIND.get(meta["name"]))
                 tilesets[first] = (art, role)
@@ -205,9 +236,9 @@ class Level:
                         name = kind(o,base)
                         if not any(k in name for k in ("solid","collision","ground","water","liquid","น้ำ","พื้น")):
                             continue
-                        w,h = o.get("width",0)/data["tilewidth"],o.get("height",0)/data["tileheight"]
+                        w,h = o.get("width",0)/data["tilewidth"], o.get("height",0)/data["tileheight"]
                         if w and h:
-                            add(Box(x+o["x"]/data["tilewidth"],self.height-y-o["y"]/data["tileheight"]-h,w,h),material(name))
+                            add(Box(x+o["x"]/data["tilewidth"], self.height-y-o["y"]/data["tileheight"]-h, w, h), material(name))
                 elif layer["type"] == "tilelayer":
                     if not isinstance(layer["data"], list):
                         raise ValueError(f"Set Tile Layer Format to CSV in {path.name}")
@@ -216,15 +247,15 @@ class Level:
                         if not gid:
                             continue
                         (ts, tileset_role), num = resolve(gid)
-                        box = Box(x+i%layer["width"],self.height-1-y-i//layer["width"])
-                        role = material(kind(ts.tiles.get(num,{}),tileset_role or base))
+                        box = Box(x+i%layer["width"], self.height-1-y-i//layer["width"])
+                        role = material(kind(ts.tiles.get(num,{}), tileset_role or base))
                         add(box,role)
                         if visible:
                             self.cells.append((box,role,ts,num,raw^gid,alpha))
         visit(data["layers"])
         self.columns = {}
         for block in self.solids:
-            for col in range(floor(block.x),ceil(block.x+block.w)):
+            for col in range(floor(block.x), ceil(block.x+block.w)):
                 self.columns.setdefault(col, []).append(block)
 
     def surfaces(self, x):

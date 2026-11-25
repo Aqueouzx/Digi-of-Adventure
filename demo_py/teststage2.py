@@ -52,6 +52,72 @@ def load_img(name, size=None):
         return None
 
 
+class BossSprite:
+    """Boss skin from assets/: every image whose name starts with "Boss" (any case, png/jpg/webp).
+    Name = Boss[_dir][_pose], e.g. Boss_front_stand.png, Boss_right_stepl.png, Boss_sit.png, or just Boss.png.
+      dir  : back | front | left | right      (a missing left is the right image mirrored; no dir = used for every direction)
+      pose : stand | stepl | stepr | sit      (no pose = stand)"""
+    DIRS = ("back", "front", "left", "right")
+    POSE = {"stand": "stand", "idle": "stand", "stepl": "stepl", "walk1": "stepl", "stepr": "stepr", "walk2": "stepr",
+            "sit": "sit", "sitting": "sit", "seat": "sit"}
+    STEP_S = 0.14
+
+    def __init__(self, stand_h, sit_h):
+        self.stand_h, self.sit_h, self.files, self.cache = stand_h, sit_h, {}, {}
+        seen = set()
+        for d in ASSET_DIRS:
+            if not os.path.isdir(d): continue
+            for fn in sorted(os.listdir(d)):
+                stem, ext = os.path.splitext(fn)
+                if not stem.lower().startswith("boss") or ext.lower() not in (".png", ".jpg", ".jpeg", ".webp") or fn.lower() in seen: continue
+                seen.add(fn.lower())
+                toks = [t for t in "".join(c if c.isalnum() else " " for c in stem.lower()[4:]).split() if t]
+                dr = next((t for t in toks if t in self.DIRS), "any")
+                pose = next((self.POSE[t] for t in toks if t in self.POSE), "stand")
+                self.files.setdefault((dr, pose), os.path.join(d, fn))
+        if self.files: print("[assets] Boss skin: %d image(s): %s" % (len(self.files), ", ".join(sorted(os.path.basename(v) for v in self.files.values()))))
+
+    def __bool__(self):
+        return bool(self.files)
+
+    def _get(self, dr, pose, mirror=False):
+        path = self.files.get((dr, pose))
+        if not path: return None
+        key = (path, mirror, pose == "sit")
+        if key not in self.cache:
+            try:
+                img = pygame.image.load(path).convert_alpha()
+                h = self.sit_h if pose == "sit" else self.stand_h
+                img = pygame.transform.smoothscale(img, (max(1, round(img.get_width() * h / img.get_height())), h))
+                self.cache[key] = pygame.transform.flip(img, True, False) if mirror else img
+            except (pygame.error, ValueError) as e:
+                print("[assets] could not read %s: %s" % (path, e)); self.cache[key] = None
+        return self.cache[key]
+
+    def image(self, sit, dr, walking, t):
+        if sit:
+            for d in (dr, "any", "back", "front", "right", "left"):
+                img = self._get(d, "sit")
+                if img: return img
+        pose = "stand"
+        if walking and not sit: pose = ("stand", "stepl", "stand", "stepr")[int(t / self.STEP_S) % 4]
+        for p in ((pose, "stand") if pose != "stand" else ("stand",)):
+            img = self._get(dr, p)
+            if img: return img
+            if dr == "left":
+                img = self._get("right", p, mirror=True)
+                if img: return img
+            img = self._get("any", p, mirror=(dr == "left"))   # single picture: flip it when walking left
+            if img: return img
+            if dr == "left":
+                img = self._get("right", p, mirror=True)
+                if img: return img
+        for d in ("front", "any", "right", "back", "left"):
+            img = self._get(d, "stand")
+            if img: return img
+        return None
+
+
 ASSET_DIR = next((d for d in ASSET_DIRS if os.path.isfile(os.path.join(d, "bg.jpg"))), ASSET_DIRS[0])
 
 class PlayerSprite:
@@ -119,7 +185,9 @@ PART_LABEL = {k: n for k, n, _ in PARTS}
 PART_SHORT = {"not": "74HC04", "and": "74HC08", "or": "74HC32", "seg": "7-seg", "dip": "DIP sw", "r10k": "10k",
               "r220": "220 ohm", "bb": "Breadboard", "psu": "DC supply"}
 TOTAL_PARTS = sum(PART_QTY.values())             # 18
-CARD2_AT, CARD3_AT = 8, 18                       # card rounds: 1 at the start, 2 when 8 parts are found, 3 when all 18 are found
+CARD_BACKS = False                               # False: no *_back pictures, every round shows the card faces right away. True: face-down backs, flip on pick
+CARD_BOX, CARD_CY = (170, 190), 180                  # card pictures are fitted into this box (never stretched), centre y
+CARD2_AT, CARD3_AT = 8, 18                       # card rounds: none at the start, 2 when 8 parts are found, 3 when all 18 are found
 
 
 R_ITEM, R_OBJ = 50, 70                        # how close (px) you must stand to the spot's walkable point
@@ -480,6 +548,7 @@ class Game:
               "NOT FOUND (looked in: %s)" % ", ".join(ASSET_DIRS))
         self.spr = PlayerSprite(ASSET_DIR, SPR_H)
         self.npc_img, self.npc_img_sit = self.scaled("npc_stand.png", SPR_H), self.scaled("npc_sit.png", 48)
+        self.boss = BossSprite(SPR_H, 48)                                           # assets/Boss*.png (see BossSprite)
         self.cu_cache = {}
         self.bb_surf = self.make_breadboard()
         self.sw = [False] * 16
@@ -496,7 +565,7 @@ class Game:
         for o in OBJS + [NPC_OBJ] + ITEM_SPOTS + HINT_SPOTS:
             self.set_anchor(o)
         self.reset_stage(True)
-        self.card_art = card_assets.CardAssets(ASSET_DIR, (170, 170)) if card_assets else None
+        self.card_art = card_assets.CardAssets(ASSET_DIR) if card_assets else None
         self.standalone = True          # demo_hub sets this to False when it runs the game
 
     def make_breadboard(self):
@@ -513,6 +582,7 @@ class Game:
         self.px, self.py = SPAWN
         self.mode, self.cur, self.page, self.cmsg = "map", None, 0, ""
         self.state = "play"
+        self.exit_requested = False
         self.found = {k: 0 for k in PART_QTY}                       # parts collected so far
         self.done_spots, self.read_hints = set(), set()
         self.rnd, self.codes, self.qa_pairs = 0, None, None         # QA tests cleared / current test inputs / the 3 pairs
@@ -524,9 +594,9 @@ class Game:
         self.boost, self.slow_t = False, 0.0
         self.hearts = 3
         self.deck = {"active": False, "round": 1, "perm": (0, 1, 2), "cursor": 1, "face": None}
-        self.career = None
-        self.r_run = {1: False, 2: False, 3: False}
-        self.r_done = {1: False, 2: False, 3: False}
+        self.career = self.lfsr_pick(3)                             # no card draw at the start: the career is picked silently (used by the round 2 / 3 card pictures)
+        self.r_run = {1: True, 2: False, 3: False}                  # round 1 (the start card) is skipped
+        self.r_done = {1: True, 2: False, 3: False}
         self.hint_popup, self.hint_title, self.toast, self.inv_cur = None, "HINT", ("", 0), 0
         self.flash, self.over_until = 0.0, 0.0
         self.play_t, self.skill_t, self.skill_used, self.zoom = 0.0, 0.0, False, None
@@ -538,6 +608,103 @@ class Game:
         self.toast = (text, time.time() + secs)
 
     def parts_total(self): return sum(self.found.values())
+
+    # ---------------- demo hub hooks ----------------
+    def start(self, handoff=None):
+        self.reset_stage(True)
+        self.show_help = False
+        if handoff:
+            if handoff.get("career") in (0, 1, 2): self.career = handoff["career"]      # career chosen in the previous stage (optional)
+            self.hearts = max(1, min(3, handoff.get("hearts", 3)))
+            self.form = max(0, min(3, handoff.get("form", 1)))
+            self.armor = max(0, min(3, handoff.get("armor", 0)))
+            self.boost = bool(handoff.get("boost", False))
+            self.shard = int(handoff.get("shards", 0))
+
+    def get_handoff(self):
+        return {
+            "hearts": self.hearts,
+            "form": self.form,
+            "armor": self.armor,
+            "boost": self.boost,
+            "shards": self.shard,
+            "career": self.career,
+        }
+
+    def get_progress(self):
+        if self.state == "clear": return 5
+        if self.rnd >= ROUNDS: return 4
+        if self.r_run[3] or self.rnd >= 2: return 3
+        if self.parts_total() >= TOTAL_PARTS: return 2
+        if self.r_run[2] or self.parts_total() >= CARD2_AT: return 1
+        return 0
+
+    def set_hearts(self, n):
+        self.hearts = max(1, min(3, n))
+        if self.state == "over":
+            self.state = "play"
+
+    def set_form(self, i):
+        self.form = max(0, min(3, i))
+
+    def toggle_debug(self):
+        self.debug = not self.debug
+
+    def jump_to(self, key):
+        form = self.form
+        self.reset_stage(True)
+        self.form = form
+        self.show_help = False
+        if key == "start":
+            return
+        if key == "clear":
+            self.state, self.form = "clear", 2
+            return
+
+        # ข้ามการ์ดรอบ 1 และข้ามคัตซีน Boss เดินเข้าห้อง (ให้ Boss นั่งรอที่โต๊ะเลย)
+        self.career = 0
+        self.r_run[1] = self.r_done[1] = True
+        self.intro_started, self.cutscene, self.talk = True, False, None
+        self.npc = {"x": NPC_SEAT[0], "y": NPC_SEAT[1], "state": "sit", "path": [], "walk": False}
+
+        if key == "r2":
+            for sp in ITEM_SPOTS[:CARD2_AT]:
+                self.done_spots.add(sp.id)
+                self.found[sp.part] += 1
+            return
+
+        # ตั้งแต่ parts / r3 / door ขึ้นไป: เก็บครบ 18 ชิ้น + ข้ามการ์ดรอบ 2
+        self.cheat_parts()
+        self.r_run[2] = self.r_done[2] = True
+        self.new_round()
+
+        if key == "parts":
+            return
+
+        # ต่อวงจรให้เสร็จพร้อมเทสต์
+        self.w = dict(REF)
+        if key == "r3":
+            self.rnd = 2
+            self.new_round()
+            return
+
+        if key == "door":
+            self.rnd = ROUNDS
+            self.r_run[3] = self.r_done[3] = True
+            self.say("All 3 QA passed! Go to the exit door.")
+
+    def do_action(self, key):
+        if key == "auto_wire":
+            self.auto_wire()
+            self.say("Circuit auto-wired! Talk to the Boss.")
+        elif key == "skill_ready":
+            self.play_t = SKILL_WAIT
+            self.skill_used = False
+            self.skill_t = 0.0
+            self.say("Workshop-shirt skill ready! (Press E)")
+        elif key == "armor":
+            self.armor = min(3, self.armor + 1)
+            self.say("Armor +1")
 
     # ---------------- input ----------------
     def poll(self, events):
@@ -629,11 +796,10 @@ class Game:
         self.deck = {"active": True, "round": r, "perm": PERMS[self.lfsr_pick(6)], "cursor": 1, "face": None}
         self.r_run[r] = True
 
-    def card_trigger(self):              # round 1: start | round 2: 8 parts found | round 3: all 18 parts found
+    def card_trigger(self):              # round 1: skipped | round 2: 8 parts found | round 3: all 18 parts found
         if self.deck["active"]:
             return
-        if not self.r_run[1]: self.card_start(1)
-        elif self.zoom: return                                      # wait until the found-part zoom has finished
+        if self.zoom: return                                        # wait until the found-part zoom has finished
         elif self.r_done[1] and not self.r_run[2] and self.parts_total() >= CARD2_AT: self.card_start(2)
         elif self.r_done[2] and not self.r_run[3] and self.parts_total() >= CARD3_AT: self.card_start(3)
 
@@ -754,6 +920,9 @@ class Game:
             while budget > 0 and n["path"]:
                 tx, ty = n["path"][0]
                 d = math.hypot(tx - n["x"], ty - n["y"])
+                if d > 0.5:                                                  # facing for the Boss skin
+                    ddx, ddy = tx - n["x"], ty - n["y"]
+                    n["dir"] = ("right" if ddx > 0 else "left") if abs(ddx) >= abs(ddy) else ("front" if ddy > 0 else "back")
                 if d <= budget:
                     n["x"], n["y"] = float(tx), float(ty)
                     n["path"].pop(0)
@@ -910,7 +1079,9 @@ class Game:
             if ev["tap"] or ev["back"]: self.show_help = False
             return
         if self.state == "clear":
-            if ev["tap"]: self.reset_stage(True)
+            if ev["tap"]:
+                if self.standalone: self.reset_stage(True)
+                else: self.exit_requested = True
             return
         if self.state == "over":
             if time.time() > self.over_until: self.reset_stage()
@@ -1088,10 +1259,8 @@ class Game:
             elif ev["tap"]:
                 self.wsrc = None
             return
-        if ev["left"]: self.wcur = (self.wcur - 1) % N_CUR
-        elif ev["right"]: self.wcur = (self.wcur + 1) % N_CUR
-        elif ev["up"]: self.wcur = (self.wcur - 6) % N_CUR
-        elif ev["down"]: self.wcur = (self.wcur + 6) % N_CUR
+        if ev["left"] or ev["right"] or ev["up"] or ev["down"]:   # the cursor moves to the nearest pin in the pressed direction
+            self.wcur = self.cursor_step(self.wcur, (ev["right"] - ev["left"], ev["down"] - ev["up"]))
         elif ev["tap"]:
             self.msel = None
             if self.wcur == CUR_CLEAR:
@@ -1103,6 +1272,21 @@ class Game:
                 self.wprev = self.w.get(sink)
                 self.wsrc = ([None] + SRC_LIST).index(self.wprev)
                 self.cmsg = ""
+
+    def cur_pos(self, i):                # screen position of cursor slot i (a pin, or the CLEAR ALL button)
+        return BTN_CLEAR.center if i == CUR_CLEAR else SINK_POS[SINKS[i]]
+
+    def cursor_step(self, cur, d):       # d = (dx, dy) of the pressed arrow; pick the closest pin lying that way (same row/column preferred)
+        x0, y0 = self.cur_pos(cur)
+        best, bs = cur, None
+        for i in range(N_CUR):
+            if i == cur: continue
+            x, y = self.cur_pos(i)
+            ax, ay = (x - x0) * d[0] + (y - y0) * d[1], abs((x - x0) * d[1]) + abs((y - y0) * d[0])   # along / across the pressed direction
+            if ax < 4: continue
+            sc = ax + 3 * ay
+            if bs is None or sc < bs: best, bs = i, sc
+        return best
 
     def bench_click(self, pos):          # mouse (PC demo only): click a source, then click a pin
         if self.wsrc is not None:
@@ -1238,11 +1422,12 @@ class Game:
             pygame.draw.rect(ui, FORM_COLORS[form], (sx, sy + SPR_H // 3, SPR_W, SPR_H - SPR_H // 3), border_radius=6)
             pygame.draw.circle(ui, (240, 200, 160), (sx + SPR_W // 2, sy + SPR_H // 6), max(6, SPR_W // 3))
 
-    def draw_npc(self, ui):              # optional images: npc_stand.png / npc_sit.png in assets
+    def draw_npc(self, ui):              # skin: assets/Boss*.png (BossSprite), else npc_stand.png / npc_sit.png, else a drawn figure
         n = self.npc
         x, y = int(n["x"]), int(n["y"])
         sit = n["state"] == "sit"
-        img = self.npc_img_sit if sit else self.npc_img
+        img = self.boss.image(sit, n.get("dir", "front"), n["walk"], time.time()) if self.boss else None
+        if img is None: img = self.npc_img_sit if sit else self.npc_img
         if img:
             ui.blit(img, (x - img.get_width() // 2, y - img.get_height() + 4))
             return
@@ -1499,7 +1684,10 @@ class Game:
         for lbl, p in (("C", (160, 238)), ("B", (160, 270)), ("A", (160, 302))):
             self.txt(ui, lbl, p[0] + 10, p[1] - 8, self.f_s, (40, 40, 40))
         if not done:
-            if self.wcur < len(SINKS): pygame.draw.circle(ui, (255, 230, 120), SINK_POS[SINKS[self.wcur]], 12, 3)
+            if self.wcur < len(SINKS):                   # cursor: dark-orange ring with a black outline so it shows on every pin
+                cp = SINK_POS[SINKS[self.wcur]]
+                pygame.draw.circle(ui, (0, 0, 0), cp, 15, 7)
+                pygame.draw.circle(ui, (220, 80, 0), cp, 15, 4)
             if self.wsrc is not None and w.get(SINKS[self.wcur]):
                 for p in SRC_POS[w[SINKS[self.wcur]]]: pygame.draw.circle(ui, (255, 230, 120), p, 11, 3)
             if self.msel:
@@ -1534,13 +1722,21 @@ class Game:
             else:
                 fb_col = CAREERS[self.career][1] if self.career is not None else (80, 85, 100)
 
-            drew_img = False
-            if self.card_art:                                   # card pictures from demo_py/card_assets.py + assets/
-                drew_img = self.card_art.draw_card(s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col)
-            else:
+            img = None
+            if self.card_art:
+                if not CARD_BACKS:                              # faces only (same look in all 3 rounds); the picked card gets a gold frame
+                    img = self.card_art.get_image(d["round"], self.career, pos, True, slot_idx=idx)
+                elif d["round"] == 1 or revealed:               # backs on: face-down first, the picked card flips to its face
+                    img = self.card_art.get_image(d["round"], self.career, pos, revealed, slot_idx=idx)
+                elif self.career is not None:
+                    img = self.card_art.get_r1_back(self.career)
+            if img:                                             # picture from assets/ (card_assets.py): keep its own proportions
+                k = min(1.0, CARD_BOX[0] / img.get_width(), CARD_BOX[1] / img.get_height())
+                if k < 1.0: img = pygame.transform.smoothscale(img, (max(1, round(img.get_width() * k)), max(1, round(img.get_height() * k))))
+                r = img.get_rect(center=(r.centerx, CARD_CY))
+                s.blit(img, r.topleft)
+            else:                                               # no picture found: plain card with text
                 pygame.draw.rect(s, fb_col, r, border_radius=10)
-
-            if not drew_img:                                    # no picture found: plain card with text
                 if d["round"] == 1:
                     if revealed:
                         self.ctxt(s, CAREERS[idx][0], r.centerx, r.y + 60, self.f_m)
@@ -1548,18 +1744,16 @@ class Game:
                     else:
                         self.ctxt(s, "?", r.centerx, r.y + 90, self.f_l, (200, 200, 200))
                 else:
-                    if self.career is not None:
-                        self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
                     if revealed:
+                        if self.career is not None: self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
                         self.ctxt(s, item_name, r.centerx, r.y + 120, self.f_s)
-            elif revealed and d["round"] > 1:                   # picture + round 2/3: item name on a dark strip
-                tag = pygame.Surface((r.w, 34), pygame.SRCALPHA)
-                tag.fill((0, 0, 0, 180))
-                s.blit(tag, (r.x, r.bottom - 42))
-                self.ctxt(s, item_name, r.centerx, r.bottom - 34, self.f_s, (255, 230, 120))
+                    else:
+                        self.ctxt(s, "?", r.centerx, r.y + 90, self.f_l, (200, 200, 200))
 
             if d["face"] is None and pos == d["cursor"]:
                 pygame.draw.rect(s, (255, 255, 255), r.inflate(10, 10), 4, border_radius=12)
+            elif revealed and not CARD_BACKS:
+                pygame.draw.rect(s, (255, 230, 120), r.inflate(10, 10), 4, border_radius=12)
 
         if d["face"] is not None:
             name, desc = ITEM_TEXT[CARD_ITEMS[d["round"]][d["perm"][d["face"]]]]
@@ -1805,7 +1999,8 @@ class Game:
             self.ctxt(ui, "STAGE 2 CLEAR - INTERNSHIP COMPLETE!", UW // 2, 160, self.f_l, (150, 255, 170))
             self.ctxt(ui, "Hearts left: %d" % self.hearts, UW // 2, 220, self.f_m)
             self.ctxt(ui, "CHARACTER EVOLVED -> %s" % FORM_NAMES[2], UW // 2, 270, self.f_m, (255, 230, 120))
-            self.ctxt(ui, "BTNC: play again", UW // 2, 370, self.f_s, (170, 200, 255))
+            self.ctxt(ui, "BTNC: play again" if self.standalone else "BTNC: continue to the next stage",
+                      UW // 2, 370, self.f_s, (170, 200, 255))
         self.draw_toast(ui)
         if self.show_help: self.draw_help(ui, s)
         screen.blit(pygame.transform.smoothscale(ui, (SCR_W, SCR_H)), (0, 0))
