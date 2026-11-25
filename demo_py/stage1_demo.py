@@ -55,7 +55,7 @@ BLOCKERS = [                                   # floor footprints (x, y, w, h)
     pygame.Rect(620, 300, 200, 70),            # grey cabinet
     pygame.Rect(815, 250, 140, 120),           # shelf
     pygame.Rect(450, 440, 125, 120),           # lockers (left wall)
-    pygame.Rect(100, 880, 200, 125),           # low cabinet (bottom-left)
+    pygame.Rect(100, 880, 160, 125),           # low cabinet (bottom-left)
     pygame.Rect(660, 420, 650, 120),           # table row 1 (back)
     pygame.Rect(520, 615, 850, 150),           # table row 2
     pygame.Rect(380, 860, 1080, 170),          # table row 3 (front)
@@ -112,10 +112,10 @@ class Obj:
 OBJS = [
     Obj("whiteboard", "whiteboard", "Whiteboard", 300, 580, 180, (165, 180, 235, 510)),
     Obj("paper", "paper", "Paper on the cabinet", 700, 400, 130, (640, 170, 70, 100)),
-    Obj("laptop3", "nand", "Laptop 1", 1370, 920, 190, (1215, 870, 115, 115)),
+    Obj("laptop3", "nand", "Laptop 1", 1370, 920, 160, (1215, 870, 115, 115)),
     Obj("laptop4", "twos", "Laptop 2", 570, 690, 150, (665, 600, 115, 95)),
     Obj("projector", "screen", "Projector screen", 1560, 400, 120, (1600, 170, 230, 540)),
-    Obj("pc", "pc", "Teacher computer", 1540, 620, 120, (1500, 565, 70, 95)),
+    Obj("pc", "pc", "Teacher computer", 1540, 650, 120, (1500, 565, 70, 95)),
     Obj("lightsw", "lightsw", "Light switch", 1150, 310, 100, (1125, 195, 26, 28)),
     Obj("door", "door", "Exit door", 1340, 300, 120, (1210, 110, 180, 240)),
 ]
@@ -203,7 +203,9 @@ class Game:
         self.bg = load_img("finalexam.jpg", (int(IMG_W * ZOOM), int(IMG_H * ZOOM)))
         self.sprite = player_sprite.PlayerSprite(ASSET_DIR, int(SPR_H * ZOOM))
         self.cu_cache = {}
+        self.app_logo_cache = {}
         self.sw = [False] * 16
+        self.sw[15] = True  # SW15 = Help (startup guide is open)
         self.sw_rects = [pygame.Rect(sw_cx(i) - 20, SCR_H + 36, 40, 34) for i in range(16)]
         self.c_down, self.c_long = None, False
         self.lfsr = (int(time.time() * 1000) & 0xFFFF) or 0xACE1
@@ -222,6 +224,8 @@ class Game:
         self.sprite.reset()
         self.mode, self.cur, self.page, self.cmsg = "map", None, 0, ""
         self.feedback = None  # None=neutral, True=correct, False=incorrect
+        self.notebook_guide_pending = False
+        self.notebook_guide_seen = False
         self.state = "play"
         self.exit_requested = False
         self.lights = True
@@ -259,10 +263,18 @@ class Game:
     def start(self, handoff=None):
         self.reset_stage(True)
         self.show_help = False
+        self.sw[15] = False
 
     def get_handoff(self):
-        return {"hearts": self.hearts, "form": self.form, "armor": self.armor,
-                "boost": self.inv["boost"], "shards": self.inv["shard"]}
+        return {
+            "hearts": self.hearts, 
+            "form": self.form, 
+            "armor": self.armor,
+            "boost": self.inv["boost"], 
+            "shards": self.inv["shard"],
+            "career": self.career  # สำคัญมาก ตัวนี้คือตัวส่งต่อสีและหมวดหมู่ครับ
+        }
+
 
     def get_inventory(self):
         return {"boost": self.inv["boost"], "shards": self.inv["shard"], "armor": self.armor}
@@ -304,17 +316,30 @@ class Game:
 
     def jump_to(self, key):
         form = self.form
+        
+        # --- [จุดที่แก้] บันทึกค่า career เดิมไว้ ถ้ายังไม่มีให้สุ่ม 0, 1 หรือ 2 แทนที่จะฟิกซ์เป็น 0 ---
+        if self.career is None:
+            self.career = 1  # หรือใช้การสุ่มเช่น (int(time.time()) % 3)
+            
+        current_career = self.career
+        
         self.reset_stage(True)
         self.form = form
+        self.career = current_career  # ล็อคค่าหมวดหมู่เดิมไว้ ไม่ให้ถูกรีเซ็ตทิ้ง
         self.show_help = False
+        self.sw[15] = False
+        
         if key == "start":
             return
         if key == "clear":
             self.state, self.form = "clear", 1
             return
+            
         for i in range(3 if key == "r2" else 5):
             self.auto_answer(i)
-        self.career = 0
+            
+        # ลบหรือคอมเมนต์บรรทัดนี้ออก: self.career = 0  <--- (ตัวการที่ทำให้เป็น Air ทุกรอบ)
+        
         self.add_hint("P3")
         self.r_run[1] = self.r_done[1] = True
         if key in ("r3", "door"):
@@ -354,6 +379,8 @@ class Game:
                 for i, r in enumerate(self.sw_rects):
                     if r.collidepoint(e.pos):
                         self.sw[i] = not self.sw[i]
+                        if i == 15:
+                            self.show_help = self.sw[15]
                         if self.mode == "closeup" and self.cur and self.cur.kind in ("whiteboard", "paper", "twos"):
                             self.clear_feedback()
             if e.type == pygame.KEYDOWN:
@@ -370,8 +397,10 @@ class Game:
                     self.sw[k - pygame.K_1] = not self.sw[k - pygame.K_1]
                     if self.mode == "closeup" and self.cur and self.cur.kind in ("whiteboard", "paper", "twos"):
                         self.clear_feedback()
-                elif k == pygame.K_n: self.sw[14] = not self.sw[14]
-                elif k == pygame.K_h: self.show_help = not self.show_help
+                elif k == pygame.K_n: self.sw[14] = not self.sw[14]  # PC demo alias for SW14
+                elif k == pygame.K_h:
+                    self.sw[15] = not self.sw[15]  # PC demo alias for SW15
+                    self.show_help = self.sw[15]
                 elif k in (pygame.K_F1, pygame.K_F2, pygame.K_F3, pygame.K_F4): self.form = k - pygame.K_F1
                 elif k == pygame.K_F5: self.cheat_solve()
                 elif k == pygame.K_F6: self.debug = not self.debug
@@ -536,6 +565,10 @@ class Game:
         if note and note not in self.notes:
             self.notes.append(note)
 
+        # The first solved A/B/C puzzle introduces the Notebook and its saved answers.
+        if i in (0, 2, 3) and not self.notebook_guide_seen:
+            self.notebook_guide_pending = True
+
         self.feedback = True
         self.cmsg = "CORRECT! " + correct_msg
         self.say("Puzzle %d correct - saved to Notebook" % (i + 1), 2.5)
@@ -571,8 +604,17 @@ class Game:
         for _ in range(7): self.lfsr_step()
         self.flash = max(0.0, self.flash - dt)
         if self.show_help:
-            if ev["tap"] or ev["back"]: self.show_help = False
+            if ev["tap"] or ev["back"]:
+                self.show_help = False
+                self.sw[15] = False
             return
+        if self.notebook_guide_pending:
+            if self.sw[14]:
+                self.notebook_guide_pending = False
+                self.notebook_guide_seen = True
+            else:
+                self.sprite.stop()
+                return
         if self.state == "clear":
             if ev["tap"]:
                 if self.standalone: self.reset_stage(True)
@@ -855,8 +897,21 @@ class Game:
 
     def draw_interaction_hint(self, ui):
         """Show a subtle [SEARCH] prompt above the player near an interactable object."""
-        if self.find_near() is None:
+        nearby = self.find_near()
+        if nearby is None:
             return
+
+        search_names = {
+            "whiteboard": "WHITEBOARD",
+            "paper": "PAPER",
+            "laptop3": "LAPTOP 1",
+            "laptop4": "LAPTOP 2",
+            "projector": "PROJECTOR SCREEN",
+            "pc": "TEACHER COMPUTER",
+            "lightsw": "LIGHT SWITCH",
+            "door": "EXIT DOOR",
+        }
+        search_name = search_names.get(nearby.id, nearby.name.upper())
 
         cx, cy = self.camera()
         player_x = int((self.px - cx) * ZOOM)
@@ -868,7 +923,7 @@ class Game:
         else:
             label_y = player_y - int(SPR_H * ZOOM) - 8
 
-        label = self.f_tiny.render("[SEARCH]", True, (225, 230, 240))
+        label = self.f_tiny.render("[SEARCH : %s]" % search_name, True, (225, 230, 240))
         label_rect = label.get_rect(center=(player_x, label_y))
 
         # A faint background keeps the small prompt readable against the room.
@@ -945,7 +1000,7 @@ class Game:
                 self.txt(s, l, 16, 440 + i * 24, self.f_m, msg_color)
         pygame.draw.rect(s, (40, 44, 60), (0, 494, 640, 46))
         self.txt(s, foot or "", 16, 499, self.f_s, (170, 200, 255))
-        self.txt(s, "Back: hold Space (BTNC) or press Esc", 16, 520, self.f_tiny, (140, 150, 180))
+        self.txt(s, "Back: hold BTNC for 0.8 s", 16, 520, self.f_tiny, (140, 150, 180))
 
     def cu_plain(self, s):
         o, st = self.cur, self.ostate[self.cur.id]
@@ -980,7 +1035,7 @@ class Game:
             self.ctxt(s, str(8 >> k), cx, 316, self.f_m)
         self.txt(s, "= %d" % self.p1_val(), 470, 262, self.f_l)
         if self.done[0]: self.txt(s, "LOGGED: A = %s" % self.ans["A"], 90, 366, self.f_m, (255, 230, 120))
-        return "ANSWER: set SW3-SW0 (keys 1-4), then BTNC"
+        return "ANSWER: set SW3-SW0, then BTNC"
 
     def draw_kmap(self, s, x, y, cell, ink):
         self.txt(s, "AB\\CD", x, y + 4, self.f_s, ink)
@@ -1017,7 +1072,7 @@ class Game:
         self.txt(s, "SW7-4: which letters (A B C D)", 310, 290, self.f_s, ink)
         self.txt(s, "SW3-0: 1 = plain, 0 = inverted", 310, 312, self.f_s, ink)
         if self.done[1]: self.txt(s, "LOGGED: F = %s" % self.p2_eq, 70, 380, self.f_m, (30, 80, 160))
-        return "BTND/BTNU slot | BTNC store | BTNR confirm answer"
+        return "BTNU/BTND slot | BTNC store | BTNR confirm answer"
 
     def cu_nand(self, s):
         pygame.draw.rect(s, (10, 20, 10), (40, 60, 560, 360), border_radius=6)
@@ -1040,7 +1095,7 @@ class Game:
         self.txt(s, ("> " if hl else "  ") + "F = output of: G%d" % (self.p3[8] + 1), 64, 256, self.f_mono, (255, 255, 120) if hl else g)
         if SHOW_P3_TARGET: self.txt(s, "target F: " + bits16(P2_TRUTH), 64, 296, self.f_tiny, g)
         self.txt(s, "your F:   " + bits16(p3_table(self.p3)), 64, 320, self.f_tiny, g)
-        return "L/R field | U/D change source | BTNC save circuit"
+        return "BTNL/BTNR field | BTNU/BTND source | BTNC save circuit"
 
     def cu_twos(self, s):
         pygame.draw.rect(s, (10, 10, 25), (40, 60, 560, 360), border_radius=6)
@@ -1058,7 +1113,22 @@ class Game:
         self.txt(s, bits, 70, 130, self.f_mono_l, (255, 255, 120))
         v = self.p4_val()
         self.txt(s, "unsigned %d    signed %d" % (v, v - 256 if v >= 128 else v), 70, 180, self.f_m, g)
-        return "ANSWER: set SW7-SW0 (keys 1-8), then BTNC"
+        return "ANSWER: set SW7-SW0, then BTNC"
+
+    def app_logo(self, app_name):
+        """Load an optional app logo; return None when its image is unavailable."""
+        filenames = {
+            "Canva": "app_logo_canva.png",
+            "Pinterest": "app_logo_pinterest.png",
+            "Explorer": "app_logo_explorer.png",
+            "AppStore": "app_logo_appstore.png",
+            "X": "app_logo_x.png",
+            "Facebook": "app_logo_facebook.png",
+        }
+        if app_name not in self.app_logo_cache:
+            filename = filenames.get(app_name)
+            self.app_logo_cache[app_name] = load_img(filename, (22, 22)) if filename else None
+        return self.app_logo_cache[app_name]
 
     def cu_screen(self, s):
         if self.lights:
@@ -1071,23 +1141,31 @@ class Game:
         pygame.draw.rect(s, (40, 50, 70), (50, 88, 480, 30))
         self.txt(s, "App Sequence (3 Logos)", 60, 94, self.f_tiny, (255, 230, 120))
         self.txt(s, "Correct Apps", 325, 94, self.f_tiny, (255, 230, 120))
-        self.txt(s, "Correct Pos", 445, 94, self.f_tiny, (255, 230, 120))
+        self.txt(s, "Correct Positions", 445, 94, self.f_tiny, (255, 230, 120))
 
         clue_rows = [
-            ("Facebook, Explorer, Canva", "2", "0"),
-            ("Facebook, Canva, X", "1", "0"),
-            ("Canva, AppStore, Pinterest", "2", "1"),
-            ("Pinterest, AppStore, Facebook", "1", "0"),
-            ("AppStore, Explorer, Facebook", "1", "0"),
+            (("Facebook", "Explorer", "Canva"), "2", "0"),
+            (("Facebook", "Canva", "X"), "1", "0"),
+            (("Canva", "AppStore", "Pinterest"), "2", "1"),
+            (("Pinterest", "AppStore", "Facebook"), "1", "0"),
+            (("AppStore", "Explorer", "Facebook"), "1", "0"),
         ]
-        for idx, (seq, ca, cp) in enumerate(clue_rows):
+        for idx, (apps, ca, cp) in enumerate(clue_rows):
             y = 122 + idx * 35
             pygame.draw.rect(s, (25, 32, 45) if idx % 2 == 0 else (20, 26, 38), (50, y, 480, 33))
-            self.txt(s, seq, 60, y + 8, self.f_tiny, (240, 240, 240))
+            for app_idx, app_name in enumerate(apps):
+                logo = self.app_logo(app_name)
+                x = 60 + app_idx * 82
+                if logo:
+                    s.blit(logo, (x, y + 5))
+                else:
+                    self.txt(s, app_name, x, y + 8, self.f_tiny, (240, 240, 240))
             self.ctxt(s, ca, 365, y + 8, self.f_s, (150, 255, 150))
             self.ctxt(s, cp, 485, y + 8, self.f_s, (255, 220, 100))
 
         self.ctxt(s, "Deduce the secret 3-app code from clues.", 320, 316, self.f_tiny, (180, 220, 180))
+        self.ctxt(s, "The nearby workstation may hold another piece of this trail.", 320, 350,
+                  self.f_tiny, (125, 145, 170))
         return "Turn off room lights to view clearly"
 
     def cu_lightsw(self, s):
@@ -1105,7 +1183,7 @@ class Game:
             r = pygame.Rect(x0 + i * 70 + 5, 332, 60, 64)
             pygame.draw.rect(s, (255, 230, 120) if i == self.door_cur else (200, 200, 200), r, border_radius=6)
             self.ctxt(s, str(self.door_digits[i]), r.centerx, r.y + 14, self.f_l, (20, 20, 20))
-        return "U/D digit | L/R box | BTNC confirm"
+        return "BTNU/BTND digit | BTNL/BTNR box | BTNC confirm"
 
     def cu_pc(self, s):
         pygame.draw.rect(s, (15, 25, 50), (40, 60, 560, 360), border_radius=6)
@@ -1118,11 +1196,11 @@ class Game:
                 pygame.draw.rect(s, (255, 230, 120) if i == self.p5_cur else (60, 75, 110), r, border_radius=8)
                 self.ctxt(s, chr(65 + self.p5[i]), r.centerx, r.y + 18, self.f_l, (255, 255, 255))
             self.txt(s, "Match projector table clues to unlock terminal", 70, 250, self.f_tiny, (180, 220, 180))
-            return "U/D box | L/R letter (A-Z) | BTNC enter"
+            return "BTNU/BTND letter (A-Z) | BTNL/BTNR box | BTNC enter"
         if self.page == 0:
             self.txt(s, "Welcome, prof.", 70, 90, self.f_mono_l, c)
             self.txt(s, "[ door_manual.txt ]", 70, 150, self.f_mono_l, (255, 230, 120))
-            return "U/D or BTNC: open file"
+            return "BTNU/BTND or BTNC: open file"
         if self.page == 1:
             lines = ["DOOR - LAYER 1  (2 digits)", "1. Take the LAST letter of your login password.",
                      "2. Find it in the table (values are HEX).", "3. Key in its DECIMAL value.", "",
@@ -1135,7 +1213,7 @@ class Game:
                      "Step 2: new digit 1 = old position 4,", "        then old 2, 5, 1, 3.",
                      "Example: row 2 4 6 8 9 -> 8 4 9 2 6"]
         for i, l in enumerate(lines): self.txt(s, l, 56, 74 + i * 33, self.f_mono, c)
-        return "U/D page"
+        return "BTNU/BTND: page"
 
     # ---------------- drawing: overlays ----------------
     def draw_cards(self, ui, s):
@@ -1151,11 +1229,16 @@ class Game:
         for pos in range(3):
             r = pygame.Rect(65 + pos * 180, 95, 170, 170)
             idx = d["perm"][pos]
+            
+            # --- ดึงชื่อไอเทมจริงๆ ของการ์ดใบนี้ (เช่น "SHARD", "SLOW", ฯลฯ) ---
+            item_key = CARD_ITEMS[d["round"]][idx] 
+            
             revealed = (d["face"] == pos)
             fb_col = CAREERS[idx][1] if (d["round"] == 1 and revealed) else (career_col if d["round"] > 1 else (80, 85, 100))
 
+            # --- ส่ง item_name=item_key เข้าไปให้ CardAssets ---
             drew_img = self.card_art.draw_card(
-                s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col
+                s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col, item_name=item_key
             )
 
             # ถ้าไม่มีรูปให้ขึ้นข้อความเดิมแทน และถ้ารอบ 2+ เปิดแล้วให้แสดงชื่อไอเทมบนแถบดำโปร่งใส
@@ -1167,23 +1250,21 @@ class Game:
                 else:
                     sym = SYMBOLS[self.career][pos] if self.career is not None else career_name
                     self.ctxt(s, sym, r.centerx, r.y + 90, self.f_m, (255, 255, 255))
-            elif revealed and d["round"] > 1:
-                tag = pygame.Surface((r.w, 34), pygame.SRCALPHA)
-                tag.fill((0, 0, 0, 180))
-                s.blit(tag, (r.x, r.bottom - 42))
-                self.ctxt(s, d["name"], r.centerx, r.bottom - 34, self.f_s, (255, 230, 120))
+            
 
             if d["face"] is None and pos == d["cursor"]:
                 pygame.draw.rect(s, (255, 255, 255), r.inflate(10, 10), 4, border_radius=12)
 
         if d["face"] is not None:
-            pygame.draw.rect(s, (30, 35, 45), (60, 300, 520, 110), border_radius=8)
-            self.ctxt(s, "Obtained: " + d["name"], 320, 308, self.f_m, (255, 230, 120))
-            for i, l in enumerate(self.wrap(d["desc"], self.f_s, 490)[:3]):
-                self.ctxt(s, l, 320, 340 + i * 20, self.f_s, (240, 240, 240))
+            # Keep the original card-result layout: the description sits in its
+            # own dark panel, while the continue prompt stays below it.
+            pygame.draw.rect(s, (30, 35, 45), (80, 300, 480, 110), border_radius=8)
+            self.ctxt(s, "Obtained: " + d["name"], 320, 306, self.f_l, (255, 230, 120))
+            for i, line in enumerate(self.wrap(d["desc"], self.f_s, 440)[:3]):
+                self.ctxt(s, line, 320, 350 + i * 20, self.f_s, (240, 240, 240))
             self.ctxt(s, "BTNC: continue", 320, 424, self.f_m, (170, 200, 255))
         else:
-            self.ctxt(s, "L/R choose   BTNC pick", 320, 360, self.f_m, (170, 200, 255))
+            self.ctxt(s, "BTNL/BTNR choose   BTNC pick", 320, 360, self.f_m, (170, 200, 255))
 
     def draw_box(self, s, rect):
         pygame.draw.rect(s, (20, 22, 30), rect, border_radius=10)
@@ -1191,7 +1272,7 @@ class Game:
 
     def draw_notebook(self, s):
         self.draw_box(s, pygame.Rect(60, 50, 520, 420))
-        self.ctxt(s, "NOTEBOOK  (SW14 / key N to close)", 320, 62, self.f_m)
+        self.ctxt(s, "NOTEBOOK  (SW14 to close)", 320, 62, self.f_m)
         v = lambda k: "?" if self.ans[k] is None else self.ans[k]
         self.txt(s, "Answers Logged: A = %s   B = %s   C = %s" % (v("A"), v("B"), v("C")), 80, 100, self.f_s, (255, 230, 120))
         y = 140
@@ -1202,22 +1283,31 @@ class Game:
         for h in self.hints_seen[-3:]:
             y = self.blit_wrap(s, "- " + h, 80, y, 480, self.f_s, (230, 230, 230))
 
+    def draw_notebook_guide(self, ui, s):
+        ov = pygame.Surface((UW, UH), pygame.SRCALPHA)
+        ov.fill((0, 0, 0, 205))
+        ui.blit(ov, (0, 0))
+        self.draw_box(s, pygame.Rect(48, 165, 544, 190))
+        self.ctxt(s, "ANSWER SAVED TO NOTEBOOK", 320, 190, self.f_l, (150, 255, 170))
+        self.ctxt(s, "Your correct answer has been recorded.", 320, 240, self.f_m)
+        self.ctxt(s, "Flip SW14 to open the Notebook and view it.", 320, 278, self.f_m, (255, 230, 120))
+        self.ctxt(s, "Gameplay will continue after you open it.", 320, 318, self.f_s, (170, 200, 255))
+
     def draw_help(self, ui, s):
         ov = pygame.Surface((UW, UH), pygame.SRCALPHA); ov.fill((0, 0, 0, 215)); ui.blit(ov, (0, 0))
         self.draw_box(s, pygame.Rect(30, 60, 580, 420))
         self.ctxt(s, "HOW TO PLAY", 320, 74, self.f_l)
-        rows = [("Move", "W A S D / arrows   (BTNU BTND BTNL BTNR)"),
-                ("Interact / confirm", "Space   (BTNC tap)"),
-                ("Back", "hold Space 0.8 s, or Esc   (BTNC hold)"),
-                ("Switches", "keys 1-8 = SW0-SW7, or click them below"),
-                ("Notebook", "N   (SW14)"),
-                ("This help", "H"),
-                ("Debug", "F1-F4 form, F5 answer next, F6 collision")]
+        rows = [("Move", "BTNU / BTND / BTNL / BTNR"),
+                ("Interact / confirm", "BTNC (tap)"),
+                ("Back", "BTNC (hold for 0.8 s)"),
+                ("Puzzle inputs", "SW0-SW7"),
+                ("Notebook", "SW14 (toggle)"),
+                ("Help", "SW15 (toggle)")]
         for i, (a, b) in enumerate(rows):
             self.txt(s, a, 54, 128 + i * 30, self.f_s, (255, 230, 120))
             self.txt(s, b, 220, 128 + i * 30, self.f_s)
-        self.blit_wrap(s, "Walk up to anything and press Space. If nothing happens, it is just scenery.", 54, 360, 530, self.f_m, (170, 200, 255))
-        self.ctxt(s, "Press Space to start", 320, 442, self.f_m, (150, 255, 170))
+        self.blit_wrap(s, "Approach an object and press BTNC. If nothing happens, it is scenery.", 54, 330, 530, self.f_m, (170, 200, 255))
+        self.ctxt(s, "BTNC: start", 320, 442, self.f_m, (150, 255, 170))
 
     def draw_hud(self, ui):
         for i in range(3):
@@ -1271,7 +1361,7 @@ class Game:
             draw_digit(scr, ch, 14 + i * 40, y0 + 26, 32, 52)
         self.txt(scr, "7-SEG: H3 = 3 hearts | right = live value", 14, y0 + 84, self.f_tiny, (170, 170, 190))
         self.txt(scr, "LED: 0-2 hearts  3 armor  4-8 puzzles answered  9 lights  10 freeze  11 slow", 360, y0 + 78, self.f_tiny, (140, 140, 160))
-        self.txt(scr, "Move WASD | BTNC = Space (hold = back) | SW0-7 = keys 1-8 or click | N notebook | H help",
+        self.txt(scr, "BTNU/BTND/BTNL/BTNR: Move | BTNC: Interact (hold: Back) | SW14: Notebook | SW15: Help",
                  360, y0 + 94, self.f_tiny, (170, 170, 190))
         self.txt(scr, "Form: %s" % FORM_NAMES[self.form], 14, y0 + 98, self.f_tiny, (140, 140, 160))
 
@@ -1283,6 +1373,8 @@ class Game:
         self.draw_hud(ui)
         if self.sw[14]: self.draw_notebook(s)
         if self.deck["active"]: self.draw_cards(ui, s)
+        if self.notebook_guide_pending and not self.sw[14]:
+            self.draw_notebook_guide(ui, s)
         if self.flash > 0:
             fl = pygame.Surface((UW, UH)); fl.fill((255, 0, 0)); fl.set_alpha(int(180 * self.flash / 0.4)); ui.blit(fl, (0, 0))
         if self.state == "over":

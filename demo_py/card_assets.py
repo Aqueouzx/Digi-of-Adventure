@@ -1,26 +1,10 @@
-#!/usr/bin/env python3
-"""card_assets.py - Shared card image loader & renderer for CPE Escape (Rounds 1 to 5).
-
-Draws every card at the EXACT original pixel size of the image file (no resizing),
-centered on the card slot rect, and returns the drawn rect so borders/overlays fit tightly.
-
-Expected image files in assets/ (supports .png, .jpg, .jpeg, .webp):
-  Round 1 (back / face-down):
-    air_back, earth_back, water_back
-  Round 1 (front / revealed):
-    air_r1, earth_r1, water_r1
-  Rounds 2-5 (by chosen career & card slot 1..3):
-    air_card1,   air_card2,   air_card3
-    earth_card1 (or eartg_card1), earth_card2, earth_card3
-    water_card1, water_card2, water_card3
-"""
+"""card_assets.py - Shared card image loader & renderer for CPE Escape (Rounds 1 to 5)."""
 import os
 import pygame
 
 CAREER_KEYS = ("air", "earth", "water")   # 0: AIR, 1: EARTH, 2: WATER
 EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
-# Support both "eartg_card1" (exact filename) and "earth_card1" (fallback)
 R1_BACK_NAMES = {
     0: ("air_back",),
     1: ("earth_back",),
@@ -33,7 +17,7 @@ R1_FRONT_NAMES = {
     2: ("water_r1",),
 }
 
-R2_TO_5_NAMES = {
+R2_TO_5_BACK_NAMES = {
     0: (("air_card1",), ("air_card2",), ("air_card3",)),
     1: (("eartg_card1", "earth_card1"), ("earth_card2",), ("earth_card3",)),
     2: (("water_card1",), ("water_card2",), ("water_card3",)),
@@ -41,8 +25,7 @@ R2_TO_5_NAMES = {
 
 
 class CardAssets:
-    def __init__(self, asset_dir=None, card_size=None):
-        """card_size=None keeps the exact original image size (no scaling)."""
+    def __init__(self, asset_dir=None, card_size=(170, 170)):  # กำหนดขนาดมาตรฐานให้การ์ดเท่ากันทุกใบ
         here = os.path.dirname(os.path.abspath(__file__))
         self.search_dirs = []
         if asset_dir:
@@ -69,6 +52,9 @@ class CardAssets:
 
     def _load(self, candidates, size=None):
         target_size = size if size is not None else self.card_size
+        if isinstance(candidates, list):
+            candidates = tuple(candidates)
+            
         key = (candidates, target_size)
         if key in self.cache:
             return self.cache[key]
@@ -79,6 +65,7 @@ class CardAssets:
             if path:
                 try:
                     raw = pygame.image.load(path).convert_alpha()
+                    # บังคับปรับขนาดให้เท่ากับ slot ของการ์ดเสมอ เพื่อให้หน้าและหลังขนาดเท่ากันเป๊ะ
                     img = pygame.transform.smoothscale(raw, target_size) if target_size else raw
                     break
                 except (pygame.error, ValueError):
@@ -86,37 +73,40 @@ class CardAssets:
         self.cache[key] = img
         return img
 
+    def get_image(self, round_num, career_idx, pos, revealed, slot_idx=None, size=None, item_name=None):
+        if career_idx is None or not (0 <= career_idx < len(CAREER_KEYS)):
+            career_idx = 0
+            
+        cat = CAREER_KEYS[career_idx]
+        
+        if round_num == 1:
+            idx = slot_idx if slot_idx is not None else pos
+            return self.get_r1_front(idx, size) if revealed else self.get_r1_back(idx, size)
+        
+        # รอบ 2 ถึง 5
+        candidates = []
+        if revealed and item_name:
+            item_lower = item_name.lower()
+            candidates.append(f"{cat}_{item_lower}")
+            candidates.append(item_lower)
+        
+        if career_idx in R2_TO_5_BACK_NAMES and 0 <= pos <= 2:
+            for name in R2_TO_5_BACK_NAMES[career_idx][pos]:
+                candidates.append(name)
+
+        return self._load(candidates, size)
+
     def get_r1_back(self, slot_career_idx, size=None):
-        """Round 1 face-down card image for career index 0(air)/1(earth)/2(water)."""
         names = R1_BACK_NAMES.get(slot_career_idx, ())
         return self._load(names, size)
 
     def get_r1_front(self, slot_career_idx, size=None):
-        """Round 1 revealed card image for career index 0(air)/1(earth)/2(water)."""
         names = R1_FRONT_NAMES.get(slot_career_idx, ())
         return self._load(names, size)
 
-    def get_round_card(self, career_idx, pos, size=None):
-        """Rounds 2-5 card image for chosen career (0..2) and slot position (0..2)."""
-        if career_idx not in R2_TO_5_NAMES or not (0 <= pos <= 2):
-            return None
-        return self._load(R2_TO_5_NAMES[career_idx][pos], size)
-
-    def get_image(self, round_num, career_idx, pos, revealed, slot_idx=None, size=None):
-        """Return the card Surface at its original size (unless size is given), or None."""
-        if round_num == 1:
-            idx = slot_idx if slot_idx is not None else pos
-            return self.get_r1_front(idx, size) if revealed else self.get_r1_back(idx, size)
-        return self.get_round_card(career_idx, pos, size)
-
     def draw_card(self, surface, slot_rect, round_num, career_idx, pos, revealed,
-                  slot_idx=None, fallback_color=(80, 85, 100)):
-        """Draw the card at its EXACT original size centered on slot_rect.
-
-        Returns:
-            (drew_img: bool, drawn_rect: pygame.Rect)
-        """
-        img = self.get_image(round_num, career_idx, pos, revealed, slot_idx=slot_idx)
+                  slot_idx=None, fallback_color=(80, 85, 100), item_name=None):
+        img = self.get_image(round_num, career_idx, pos, revealed, slot_idx=slot_idx, item_name=item_name)
         if img is not None:
             drawn_rect = img.get_rect(center=slot_rect.center)
             surface.blit(img, drawn_rect.topleft)

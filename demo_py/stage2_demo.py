@@ -467,6 +467,96 @@ def wire_pts(a, b):
 
 
 class Game:
+        # ---- demo hub interface (for stage 2) ----
+    CHECKPOINTS = [
+        ("start", "Start of stage"),
+        ("parts", "All 4 parts collected"),
+        ("bench", "Decoder bench powered on"),
+        ("qa1", "Passed QA round 1"),
+        ("qa3", "All 3 QA rounds cleared (Door open)"),
+        ("clear", "Stage 2 cleared")
+    ]
+    ACTIONS = [
+        ("give_parts", "Collect all 4 parts"),
+        ("give_armor", "Give 1 Armor"),
+        ("wrong_qa", "Trigger QA failure penalty")
+    ]
+
+    def start(self, handoff=None):
+        self.reset_stage(True)
+        self.show_help = False
+
+    def get_handoff(self):
+        return {
+            "hearts": getattr(self, "hearts", 3),
+            "form": getattr(self, "form", 0),
+            "armor": getattr(self, "armor", 0),
+            "boost": getattr(self, "boost", False),
+            "shards": getattr(self, "shard", 0)
+        }
+
+    def get_progress(self):
+        if getattr(self, "state", "") == "clear":
+            return 5
+        # เช็กความคืบหน้าตามกลไกของ Stage 2
+        parts_collected = len(getattr(self, "parts", {})) >= 4
+        qa_rnd = getattr(self, "rnd", 0)
+        if qa_rnd >= 3:
+            return 4
+        if qa_rnd >= 1:
+            return 3
+        if parts_collected:
+            # สมมติถ้าเปิดบอร์ด/เดคโคเดอร์แล้ว ให้ดันขึ้นไปขั้น 2
+            return 2 if getattr(self, "page", 0) > 0 else 1
+        return 0
+
+    def set_hearts(self, n):
+        self.hearts = max(1, min(3, n))
+        if getattr(self, "state", "") == "over":
+            self.state = "play"
+
+    def set_form(self, i):
+        self.form = max(0, min(3, i))
+
+    def toggle_debug(self):
+        self.debug = not getattr(self, "debug", False)
+
+    def jump_to(self, key):
+        career = self.career
+        self.career = career if career is not None else 1
+        self.reset_stage(True)
+        self.show_help = False
+        if key == "start":
+            return
+        if key == "clear":
+            self.state = "clear"
+            return
+        # จำลองการกระโดดข้ามขั้นตอนตาม Checkpoint
+        if key in ("parts", "bench", "qa1", "qa3"):
+            # บังคับให้เก็บชิ้นส่วนครบ 4 ชิ้น
+            if hasattr(self, "parts"):
+                self.parts = {"and1": True, "and2": True, "or": True, "not": True}
+        if key in ("bench", "qa1", "qa3"):
+            self.page = 1  # เปิดหน้าจอเดคโคเดอร์
+        if key in ("qa1", "qa3"):
+            self.rnd = 1   # ผ่านรอบที่ 1
+        if key == "qa3":
+            self.rnd = 3   # ผ่านครบ 3 รอบ ปลดล็อกประตู
+
+    def do_action(self, key):
+        if key == "give_parts":
+            if hasattr(self, "parts"):
+                self.parts = {"and1": True, "and2": True, "or": True, "not": True}
+                self.say("[DEBUG] Collected all 4 parts")
+        elif key == "give_armor":
+            if hasattr(self, "armor"):
+                self.armor = min(3, self.armor + 1)
+                self.say("Armor +1")
+        elif key == "wrong_qa":
+            # จำลองการตอบคำถามผิดเพื่อทดสอบระบบหักหัวใจ/เกราะ
+            if hasattr(self, "hearts"):
+                self.hearts = max(0, self.hearts - 1)
+                self.say("[DEBUG] Triggered QA penalty (-1 heart)")
     def __init__(self):
         self.f_tiny = pygame.font.Font(None, 15)
         self.f_s = pygame.font.Font(None, 20)
@@ -550,6 +640,12 @@ class Game:
             self.armor = max(0, min(3, handoff.get("armor", 0)))
             self.boost = bool(handoff.get("boost", False))
             self.shard = int(handoff.get("shards", 0))
+
+            # --- [จุดที่เพิ่ม] รับค่า career มาจากฮับหรือสเตจก่อนหน้า ---
+
+            if "career" in handoff:
+
+                self.career = handoff["career"]
 
     def get_handoff(self):
         return {
@@ -722,16 +818,21 @@ class Game:
                 return v
 
     def card_start(self, r):
+        # ถ้ารอบ 2 (รอบแรกของ Stage 2) ให้สอดรับกับ career ที่เคยเลือกไว้จาก Stage 1
+        # แต่ถ้าไม่มี ให้สุ่มใหม่ตามปกติ
         self.deck = {"active": True, "round": r, "perm": PERMS[self.lfsr_pick(6)], "cursor": 1, "face": None}
         self.r_run[r] = True
 
-    def card_trigger(self):              # round 1: start | round 2: 8 parts found | round 3: all 18 parts found
+    def card_trigger(self):              
+        # Stage 2 จะมีแค่ 2 รอบ คือ ตอนเก็บครบ 8 ชิ้น (Round 2 ของเกม) และตอนครบ 18 ชิ้น (Round 3 ของเกม)
         if self.deck["active"]:
             return
-        if not self.r_run[1]: self.card_start(1)
-        elif self.zoom: return                                      # wait until the found-part zoom has finished
-        elif self.r_done[1] and not self.r_run[2] and self.parts_total() >= CARD2_AT: self.card_start(2)
-        elif self.r_done[2] and not self.r_run[3] and self.parts_total() >= CARD3_AT: self.card_start(3)
+        
+        # เช็คเงื่อนไขขึ้นการ์ดเฉพาะรอบ 8 ชิ้น และ 18 ชิ้น
+        if not self.r_run[2] and self.parts_total() >= CARD2_AT: 
+            self.card_start(2)
+        elif self.r_done[2] and not self.r_run[3] and self.parts_total() >= CARD3_AT: 
+            self.card_start(3)
 
     def cards_input(self, ev):
         d = self.deck
@@ -1627,30 +1728,25 @@ class Game:
             item_name = ITEM_TEXT[item][0]
             revealed = (d["face"] == pos)
 
-            if d["round"] == 1:
-                fb_col = CAREERS[idx][1] if revealed else (80, 85, 100)
+            # --- บังคับใช้สีตาม self.career ที่ผู้เล่นเลือกไว้จาก Stage 1 เสมอ ---
+            if self.career is not None:
+                fb_col = CAREERS[self.career][1]
             else:
-                fb_col = CAREERS[self.career][1] if self.career is not None else (80, 85, 100)
+                fb_col = (80, 85, 100)
 
             drew_img = False
-            if self.card_art:                                   # card pictures from demo_py/card_assets.py + assets/
-                drew_img = self.card_art.draw_card(s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col)
+            if self.card_art:                                   
+                # ส่งค่า career_idx เข้าไปเบื้องหลังโดยใช้ self.career เสมอ (แทนที่จะเปลี่ยนไปตามไอเทมสุ่ม)
+                drew_img = self.card_art.draw_card(s, r, d["round"], self.career if self.career is not None else 0, pos, revealed, slot_idx=idx, fallback_color=fb_col)
             else:
                 pygame.draw.rect(s, fb_col, r, border_radius=10)
 
-            if not drew_img:                                    # no picture found: plain card with text
-                if d["round"] == 1:
-                    if revealed:
-                        self.ctxt(s, CAREERS[idx][0], r.centerx, r.y + 60, self.f_m)
-                        self.ctxt(s, item_name, r.centerx, r.y + 120, self.f_s)
-                    else:
-                        self.ctxt(s, "?", r.centerx, r.y + 90, self.f_l, (200, 200, 200))
-                else:
-                    if self.career is not None:
-                        self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
-                    if revealed:
-                        self.ctxt(s, item_name, r.centerx, r.y + 120, self.f_s)
-            elif revealed and d["round"] > 1:                   # picture + round 2/3: item name on a dark strip
+            if not drew_img:                                    
+                if self.career is not None:
+                    self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
+                if revealed:
+                    self.ctxt(s, item_name, r.centerx, r.y + 120, self.f_s)
+            elif revealed:                   
                 tag = pygame.Surface((r.w, 34), pygame.SRCALPHA)
                 tag.fill((0, 0, 0, 180))
                 s.blit(tag, (r.x, r.bottom - 42))
