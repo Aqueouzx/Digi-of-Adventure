@@ -25,6 +25,7 @@ REGISTRY = [                         # (tab label, python module, class name) - 
     ("Stage 1", "stage1_demo", "Game"),
     ("Cutscene 1-2", "cutscene_1_2", "Game"),
     ("Stage 2", "stage2_demo", "Game"),
+    ("Cutscene 2-3", "cutscene_2_3", "Game"),
     ("Stage 3", "stage3_demo", "Game"),
 ]
 WINDOW = (1152, 760)
