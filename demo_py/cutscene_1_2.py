@@ -15,7 +15,7 @@ FADE_S = 0.6
 ZOOM_MAX = 1.08              # subtle slow zoom to give life to a single image
 
 LINES = [
-    "You cracked the Final Exam door locks and escaped Room 402!",
+    "You cracked the Final Exam door locks and escaped Room CPE1119!",
     "STAGE EVOLUTION: Student Uniform  ->  Workshop Shirt",
     "Next stop: your Engineering Internship. Time to put your hardware skills to work.",
 ]

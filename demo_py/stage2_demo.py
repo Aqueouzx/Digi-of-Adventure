@@ -443,7 +443,7 @@ ITEM_TEXT = {
     "SHARD": ("Armor Shard", "Collect 2 shards to forge 1 Armor."),
     "SLOW": ("Slow", "You walk slower for 10 seconds."),
     "HINT_SMART": ("Hint", "Use it from the inventory (I)."),
-    "FREEZE": ("Freeze", "Stops moving obstacles for 5 s. Saved for Stage 3."),
+    "FREEZE": ("Freeze", "You are frozen in place for 10 seconds."),
     "UNDO": ("Undo", "Reverts your latest wiring change."),
     "HEART_LOSS": ("Heart Loss", "Oops! You lost 1 heart immediately!"),
 }
@@ -549,6 +549,7 @@ class Game:
     ]
     ACTIONS = [
         ("give_parts", "Collect all 18 parts"),
+        ("bench_check", "All 18 parts (check 4th card)"),
         ("give_armor", "Give 1 Armor"),
         ("wrong_qa", "Trigger QA failure penalty")
     ]
@@ -584,7 +585,7 @@ class Game:
             self.set_anchor(o)
         self.career = 0
         self.reset_stage(True)
-        self.card_art = card_assets.CardAssets(ASSET_DIR) if card_assets else None
+        self.card_art = card_assets.CardAssets(ASSET_DIR, (170, 170)) if card_assets else None
         self.standalone = True
 
     def make_breadboard(self):
@@ -610,10 +611,11 @@ class Game:
         self.undo_rec = None
         self.notes, self.hints_seen = [], []
         self.hh = self.hs = self.undo = self.freeze = self.armor = self.shard = 0
-        self.boost, self.slow_t = False, 0.0
+        self.boost, self.slow_t, self.freeze_t = False, 0.0, 0.0
         self.hearts = 3
         self.deck = {"active": False, "round": 1, "perm": (0, 1, 2), "cursor": 1, "face": None}
-        self.career = self.lfsr_pick(3)
+        self.card_backs = [self.lfsr_pick(3), self.lfsr_pick(3)]   # 2 cards from Stage 1
+        self.career = self.card_backs[0]
         self.r_run = {1: True, 2: False, 3: False}
         self.r_done = {1: True, 2: False, 3: False}
         self.hint_popup, self.hint_title, self.toast, self.inv_cur = None, "HINT", ("", 0), 0
@@ -633,7 +635,13 @@ class Game:
         self.reset_stage(True)
         self.show_help = False
         if handoff:
-            if handoff.get("career") in (0, 1, 2): self.career = handoff["career"]
+            if isinstance(handoff.get("card_backs"), (list, tuple)) and len(handoff["card_backs"]) >= 2:
+                self.card_backs = [int(x) % 3 for x in handoff["card_backs"][:2]]
+                self.career = handoff["career"] if handoff.get("career") in (0, 1, 2) else self.card_backs[0]
+            elif handoff.get("career") in (0, 1, 2):
+                self.career = handoff["career"]
+                second = handoff["card2"] if handoff.get("card2") in (0, 1, 2) else self.lfsr_pick(3)
+                self.card_backs = [self.career, second]
             self.hearts = max(1, min(3, handoff.get("hearts", 3)))
             self.form = max(0, min(3, handoff.get("form", 1)))
             self.armor = max(0, min(3, handoff.get("armor", 0)))
@@ -648,6 +656,7 @@ class Game:
             "boost": self.boost,
             "shards": self.shard,
             "career": self.career,
+            "card_backs": list(self.card_backs),
         }
 
     def get_progress(self):
@@ -673,10 +682,13 @@ class Game:
         if self.career is None:
             self.career = 0
         current_career = self.career
+        stage1_backs = list(self.card_backs[:2])
         
         self.reset_stage(True)
         self.form = form
         self.career = current_career
+        if len(stage1_backs) == 2:
+            self.card_backs = stage1_backs
         self.show_help = False
         
         if key == "start":
@@ -700,10 +712,11 @@ class Game:
         if key in ("bench", "qa3"):
             self.cheat_parts()
             self.r_run[2] = self.r_done[2] = True
-            self.card_start(3)
             self.new_round()
             self.page = 1
             if key == "bench":
+                self.card_backs = [0, 1, 2]
+                self.card_start(3)
                 return
 
         if key == "qa3":
@@ -716,6 +729,22 @@ class Game:
         if key == "give_parts":
             self.cheat_parts()
             self.say("[DEBUG] Collected all 18 parts")
+        elif key == "bench_check":
+            self.show_help = False
+            self.zoom = None
+            self.intro_started, self.cutscene, self.talk = True, False, None
+            self.npc = {"x": NPC_SEAT[0], "y": NPC_SEAT[1], "state": "sit", "path": [], "walk": False}
+            self.cheat_parts()
+            if self.codes is None and self.rnd < ROUNDS:
+                self.new_round()
+            if not self.r_done[2]:
+                self.say("All 18 parts! Pick card 3 first; 4th checks backs.")
+            elif len(self.card_backs) == 3 and len(set(self.card_backs)) == 3 and not self.r_run[3]:
+                self.say("All 3 card backs differ -> 4th card ready!")
+            elif self.r_run[3]:
+                self.say("4th card round already used.")
+            else:
+                self.say("Card backs not all different -> total stays 3.")
         elif key == "give_armor":
             self.armor = min(3, self.armor + 1)
             self.say("Armor +1")
@@ -813,22 +842,38 @@ class Game:
         self.r_run[r] = True
 
     def card_trigger(self):
-        if self.deck["active"]:
+        if self.deck["active"] or self.zoom:
             return
-        if self.zoom: return
-        elif self.r_done[1] and not self.r_run[2] and self.parts_total() >= CARD2_AT: self.card_start(2)
-        elif self.r_done[2] and not self.r_run[3] and self.parts_total() >= CARD3_AT: self.card_start(3)
+        if self.r_done[1] and not self.r_run[2] and self.parts_total() >= CARD2_AT:
+            self.card_start(2)
+        elif (
+            self.r_done[2]
+            and not self.r_run[3]
+            and self.parts_total() >= CARD3_AT
+            and len(self.card_backs) == 3
+            and len(set(self.card_backs)) == 3
+        ):
+            self.card_start(3)
 
     def cards_input(self, ev):
         d = self.deck
         if d["face"] is None:
-            if ev["left"]: d["cursor"] = (d["cursor"] - 1) % 3
-            elif ev["right"]: d["cursor"] = (d["cursor"] + 1) % 3
+            if ev["left"]:
+                d["cursor"] = (d["cursor"] - 1) % 3
+            elif ev["right"]:
+                d["cursor"] = (d["cursor"] + 1) % 3
             elif ev["tap"]:
                 d["face"] = d["cursor"]
-                idx = d["perm"][d["cursor"]]
-                if d["round"] == 1: self.career = idx
+                back = d["cursor"]
+                idx = d["perm"][back]
+                if d["round"] == 1:
+                    self.career = idx
+                self.card_backs.append(back)
                 self.grant(CARD_ITEMS[d["round"]][idx])
+            elif ev["back"] and d["round"] == 3:
+                d["active"] = False
+                self.r_done[3] = True
+                self.say("Skipped optional 4th card.")
         elif ev["tap"]:
             d["active"] = False
             self.r_done[d["round"]] = True
@@ -838,7 +883,7 @@ class Game:
         if item == "HINT_HARD": self.hh = cap(self.hh)
         elif item == "HINT_SMART": self.hs = cap(self.hs)
         elif item == "UNDO": self.undo = cap(self.undo)
-        elif item == "FREEZE": self.freeze = cap(self.freeze)
+        elif item == "FREEZE": self.freeze_t = 10.0
         elif item == "ARMOR": self.armor = cap(self.armor)
         elif item == "BOOST": self.boost = True
         elif item == "SLOW": self.slow_t = 10.0
@@ -1065,6 +1110,11 @@ class Game:
             h = self.smart_hint()
             if h is None: return self.say("Nothing left to hint.")
             self.hs -= 1; self.show_hint(h)
+        elif name == "FREEZE":
+            if self.freeze == 0: return self.say("You do not have this item.")
+            self.freeze -= 1
+            self.freeze_t = 10.0
+            self.say("Frozen for 10 seconds!")
 
     def inventory_input(self, ev):
         if ev["left"]: self.inv_cur = (self.inv_cur - 1) % 4
@@ -1104,6 +1154,7 @@ class Game:
         if self.talk: self.talk_input(ev); return
         if self.cutscene: return
         self.play_t += dt
+        self.freeze_t = max(0.0, self.freeze_t - dt)
         if self.zoom:
             if ev["tap"] and self.zoom["t"] > 0.8: self.zoom = None
             return
@@ -1133,6 +1184,8 @@ class Game:
         self.say("WORKSHOP SHIRT: hidden parts revealed!")
 
     def speed(self):
+        if self.freeze_t > 0:
+            return 0.0
         s = BASE_SPEED * 1.2
         return s * 0.5 if self.slow_t > 0 else s
 
@@ -1717,11 +1770,10 @@ class Game:
 
             drew_img = False
             if self.card_art:
-                _, drawn_r = self.card_art.draw_card(
+                drew_img, drawn_r = self.card_art.draw_card(
                     s, r, d["round"], self.career if self.career is not None else 0, pos, revealed,
                     slot_idx=idx, fallback_color=fb_col, item_name=item
                 )
-                drew_img = True
 
             if not drew_img:
                 pygame.draw.rect(s, fb_col, r, border_radius=10)
@@ -1749,7 +1801,8 @@ class Game:
             self.ctxt(s, desc, 320, 356, self.f_s, (240, 240, 240))
             self.ctxt(s, "BTNC: continue", 320, 420, self.f_m, (170, 200, 255))
         else:
-            self.ctxt(s, "L/R choose   BTNC pick", 320, 360, self.f_m, (170, 200, 255))
+            prompt = "L/R choose   BTNC pick   Esc skip" if d["round"] == 3 else "L/R choose   BTNC pick"
+            self.ctxt(s, prompt, 320, 360, self.f_m, (170, 200, 255))
 
     def draw_inventory(self, s):
         self.draw_box(s, pygame.Rect(90, 80, 460, 340))
@@ -1818,6 +1871,8 @@ class Game:
             self.txt(ui, "x%d" % self.armor, 118, 14, self.f_s, (120, 200, 255))
         if self.slow_t > 0:
             self.txt(ui, "SLOW %.0fs" % self.slow_t, 16, 40, self.f_s, (255, 150, 80))
+        if self.freeze_t > 0:
+            self.txt(ui, "FREEZE %.0fs" % self.freeze_t, 290, 14, self.f_m, (140, 220, 255))
         if self.mode == "map" or not (self.cur and self.cur.kind == "bench" and self.page == 1):
             self.rtxt(ui, "Parts %d/%d" % (self.parts_total(), TOTAL_PARTS), UW - 14, 10, self.f_s, (150, 255, 170))
             self.rtxt(ui, "QA %d/%d" % (self.rnd, ROUNDS), UW - 14, 28, self.f_s, (255, 230, 120))

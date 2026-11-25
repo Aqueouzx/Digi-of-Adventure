@@ -2,9 +2,11 @@
 # PC DEMO ONLY - not FPGA code. Gameplay prototype of Stage 1 (Final Exam), 16:9.
 # Optional images in ../assets/ :
 #   finalexam.jpg (the room picture, any 16:9 size)
+#   intro_char.png (character sprite who explains the Stage 1 objective at the start)
 #   player_form{0-3}_{front|back|left|right}_{stand|stepl|stepr}.png (transparent PNG, see player_sprite.py)
 #   closeup_<id>.png (16:9)  ids: whiteboard paper laptop3 laptop4 screen projector pc lightsw door keypad box shelf
 # Missing files -> placeholders, the game still runs.
+from collections import deque
 import itertools, math, os, sys, time
 import pygame
 import player_sprite
@@ -25,6 +27,15 @@ BASE_SPEED = 360.0                          # world px / second
 LONG_PRESS_S = 0.8
 ASSET_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets")
 
+# ---- stage intro character & story ----
+GUIDE_POS = (1210.0, 395.0)
+GUIDE_NAME = "TA"
+INTRO_LINES = [
+    "Hey! Our Final Exam in Room CPE1119 is starting right now.",
+    "To pass the exam, you must solve all 5 puzzles around the classroom to uncover the password for the exit door.",
+    "Good luck!",
+]
+
 # ---- design switches ----
 HINT_BY_TRUTH = True     # True: smart hint looks at the real right/wrong state (leaks which puzzle is wrong)
                          # False: smart hint only looks at "has the player answered it yet"
@@ -44,7 +55,7 @@ CODE2 = [_PRE[i] for i in (3, 1, 4, 0, 2)]                  # order 4-2-5-1-3 ->
 GRAY = [0, 1, 3, 2]
 SRC_NAMES = ["A", "B", "C", "D", "G1", "G2", "G3"]
 APP_LOGOS = ["Canva", "Pinterest", "Explorer", "AppStore", "X (Twitter)", "Facebook"]
-PC_APP_ANS = [0, 1, 2] # C, P, E indices
+PC_APP_ANS = [0, 1, 2]  # C, P, E indices
 
 # ---------------- walkable floor + blockers (WORLD px, measured from room.png) ----------------
 FLOOR_TOP, FLOOR_BOT = 360, 1085
@@ -66,7 +77,7 @@ SPAWN = (1300.0, 405.0)
 # ---------------- hints / items / cards ----------------
 HINTS = {
     "P1": "10",
-    "P2": "Circle the 1s in the biggest groups you can. Two groups are enough.",   # TODO: write your own
+    "P2": "Circle the 1s in the biggest groups you can. Two groups are enough.",
     "P3": "De Morgan",
     "P4": "00001100",
     "P5": "It takes greater faith to dance in the dark than to rest in light.",
@@ -86,7 +97,7 @@ ITEM_TEXT = {
     "SHARD": ("Armor Shard", "Collect 2 shards to forge 1 Armor."),
     "SLOW": ("Slow", "You walk slower for 10 seconds."),
     "HINT_SMART": ("Hint", ""),
-    "FREEZE": ("Freeze", "Moving obstacles stop for 5 seconds."),
+    "FREEZE": ("Freeze", "You are frozen in place for 10 seconds."),
     "UNDO": ("Undo", ""),
 }
 CAREERS = [("AIR", (60, 170, 80)), ("EARTH", (220, 190, 50)), ("WATER", (200, 60, 60))]
@@ -166,6 +177,39 @@ def load_img(name, size=None):
         return None
 
 
+def load_guide_sprite():
+    """Load intro_char.png, strip outer white background if opaque, and crop tight."""
+    raw = None
+    for fname in ("intro_char.png", "exam_guide.png", "classmate.png"):
+        raw = load_img(fname)
+        if raw is not None:
+            break
+    if raw is None:
+        return None
+
+    surf = raw.copy()
+    w, h = surf.get_size()
+    is_white = lambda c: c.r >= 245 and c.g >= 245 and c.b >= 245 and c.a == 255
+    corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+    if any(is_white(surf.get_at(pt)) for pt in corners):
+        visited = set()
+        q = deque([pt for pt in corners if is_white(surf.get_at(pt))])
+        visited.update(q)
+        while q:
+            x, y = q.popleft()
+            surf.set_at((x, y), (255, 255, 255, 0))
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
+                    if is_white(surf.get_at((nx, ny))):
+                        visited.add((nx, ny))
+                        q.append((nx, ny))
+
+    bounds = surf.get_bounding_rect()
+    if bounds.w > 0 and bounds.h > 0:
+        surf = surf.subsurface(bounds).copy()
+    return surf
+
+
 def draw_digit(scr, ch, x, y, w, h):
     t = max(3, w // 6)
     h2 = h // 2
@@ -202,6 +246,20 @@ class Game:
         self.f_mono_l = pygame.font.SysFont(mono, 25)
         self.bg = load_img("finalexam.jpg", (int(IMG_W * ZOOM), int(IMG_H * ZOOM)))
         self.sprite = player_sprite.PlayerSprite(ASSET_DIR, int(SPR_H * ZOOM))
+
+        raw_guide = load_guide_sprite()
+        if raw_guide:
+            gh = int(SPR_H * ZOOM)
+            gw = max(1, round(raw_guide.get_width() * gh / raw_guide.get_height()))
+            self.guide_world = pygame.transform.scale(raw_guide, (gw, gh))
+            pk = min(84 / raw_guide.get_width(), 84 / raw_guide.get_height())
+            self.guide_portrait = pygame.transform.scale(
+                raw_guide, (max(1, round(raw_guide.get_width() * pk)), max(1, round(raw_guide.get_height() * pk)))
+            )
+        else:
+            self.guide_world = None
+            self.guide_portrait = None
+
         self.cu_cache = {}
         self.app_logo_cache = {}
         self.sw = [False] * 16
@@ -216,12 +274,12 @@ class Game:
         self.reset_stage(True)
         self.card_art = card_assets.CardAssets(ASSET_DIR, (170, 170))
 
-
     def reset_stage(self, full=False):
         if full:
             self.form = 0
         self.px, self.py = SPAWN
         self.sprite.reset()
+        self.intro_idx = 0 if full else None
         self.mode, self.cur, self.page, self.cmsg = "map", None, 0, ""
         self.feedback = None  # None=neutral, True=correct, False=incorrect
         self.notebook_guide_pending = False
@@ -251,6 +309,7 @@ class Game:
         self.deck = {"active": False, "round": 1, "perm": (0, 1, 2), "cursor": 1, "face": None,
                      "name": "", "desc": ""}
         self.career = None
+        self.card_backs = []
         self.r_run = {1: False, 2: False, 3: False}
         self.r_done = {1: False, 2: False, 3: False}
         self.toast = ("", 0)
@@ -266,15 +325,21 @@ class Game:
         self.sw[15] = False
 
     def get_handoff(self):
+        backs = list(self.card_backs[:2])
+        while len(backs) < 2:
+            self.lfsr_step()
+            v = self.lfsr & 7
+            if v < 3:
+                backs.append(v)
         return {
-            "hearts": self.hearts, 
-            "form": self.form, 
+            "hearts": self.hearts,
+            "form": self.form,
             "armor": self.armor,
-            "boost": self.inv["boost"], 
+            "boost": self.inv["boost"],
             "shards": self.inv["shard"],
-            "career": self.career  # สำคัญมาก ตัวนี้คือตัวส่งต่อสีและหมวดหมู่ครับ
+            "career": self.career,
+            "card_backs": backs,
         }
-
 
     def get_inventory(self):
         return {"boost": self.inv["boost"], "shards": self.inv["shard"], "armor": self.armor}
@@ -316,36 +381,37 @@ class Game:
 
     def jump_to(self, key):
         form = self.form
-        
-        # --- [จุดที่แก้] บันทึกค่า career เดิมไว้ ถ้ายังไม่มีให้สุ่ม 0, 1 หรือ 2 แทนที่จะฟิกซ์เป็น 0 ---
         if self.career is None:
-            self.career = 1  # หรือใช้การสุ่มเช่น (int(time.time()) % 3)
-            
+            self.career = 1
         current_career = self.career
-        
+        prev_backs = list(self.card_backs)
+
         self.reset_stage(True)
         self.form = form
-        self.career = current_career  # ล็อคค่าหมวดหมู่เดิมไว้ ไม่ให้ถูกรีเซ็ตทิ้ง
+        self.career = current_career
         self.show_help = False
         self.sw[15] = False
-        
+
         if key == "start":
             return
+        self.intro_idx = None
         if key == "clear":
+            self.card_backs = prev_backs[:2]
             self.state, self.form = "clear", 1
             return
-            
+
         for i in range(3 if key == "r2" else 5):
             self.auto_answer(i)
-            
-        # ลบหรือคอมเมนต์บรรทัดนี้ออก: self.career = 0  <--- (ตัวการที่ทำให้เป็น Air ทุกรอบ)
-        
+
         self.add_hint("P3")
         self.r_run[1] = self.r_done[1] = True
         if key in ("r3", "door"):
             self.r_run[2] = self.r_done[2] = True
+            if key == "r3":
+                self.card_backs = prev_backs[:1]
         if key == "door":
             self.r_run[3] = self.r_done[3] = True
+            self.card_backs = prev_backs[:2]
 
     def do_action(self, key):
         if key == "armor":
@@ -353,22 +419,9 @@ class Game:
             self.say("Armor +1")
         elif key == "door_wrong":
             self.jump_to("door")
-            # Test a wrong door entry without writing an incorrect value to the Notebook.
             self.door_digits = [9, 9, 9, 9, 9]
 
     # ---------------- input ----------------
-    
-    def find_near(self):
-        # ค้นหาวัตถุที่ตัวละครเดินไปยืนใกล้ๆ (รัศมี r)
-        best, bs = None, 9.0
-        for o in OBJS:
-            # คำนวณระยะห่างระหว่างตัวละครกับวัตถุ
-            score = math.hypot(self.px - o.ax, self.py - o.ay) / o.r
-            if score <= 1.0 and score < bs:
-                best, bs = o, score
-        return best
-    
-    
     def poll(self, events):
         ev = dict(up=0, down=0, left=0, right=0, tap=0, back=0)
         now = time.time()
@@ -427,7 +480,6 @@ class Game:
         self.lfsr = q if q else 0xACE1
 
     # ---------------- cards ----------------
-    # One source of truth: card position -> perm -> colour index -> item. Name, text and effect all use card_item().
     def card_start(self, r):
         while True:
             self.lfsr_step()
@@ -458,9 +510,10 @@ class Game:
             elif ev["tap"]:
                 d["face"] = d["cursor"]
                 if d["round"] == 1: self.career = d["perm"][d["cursor"]]
+                else: self.card_backs.append(d["cursor"])
                 item = self.card_item(d["cursor"])
                 d["name"] = ITEM_TEXT[item][0]
-                d["desc"] = self.grant(item)          # effect happens now, returns the text to show
+                d["desc"] = self.grant(item)
         elif ev["tap"]:
             d["active"] = False
             self.r_done[d["round"]] = True
@@ -470,9 +523,9 @@ class Game:
         return self.right[i] if HINT_BY_TRUTH else self.done[i]
 
     def smart_hint(self):
-        if not self.done[4]:                       # puzzle 5 not done yet -> always P5
+        if not self.done[4]:
             return "P5"
-        for idx in HINT_ORDER:                     # then the hardest unfinished one: P3 -> P2 -> P1 -> P4
+        for idx in HINT_ORDER:
             if not self.passed(idx):
                 return "P%d" % (idx + 1)
         return None
@@ -482,18 +535,15 @@ class Game:
             self.hints_seen.append(HINTS[key])
 
     def apply_undo(self):
-        r = self.undo_rec
-        if not r:
+        if not self.done[3]:
             return "Nothing to undo right now."
-        i = r["i"]
-        self.ans = r["ans"]
-        self.done[i], self.right[i] = r["done"], r["right"]
-        if i == 1 and not self.done[1]: self.p2_eq = ""
-        self.undo_rec = None
-        return "Your latest answer (Puzzle %d) was undone." % (i + 1)
+        self.ans["C"] = None
+        self.done[3] = False
+        self.right[3] = False
+        self.notes = [n for n in self.notes if not n.startswith("P4 ")]
+        return "Puzzle 4 was undone. Solve it again!"
 
     def grant(self, item):
-        """Apply the card effect immediately. Returns the description shown on the card."""
         cap = lambda v: min(3, v + 1)
         if item == "HINT_HARD":
             self.add_hint("P3")
@@ -510,7 +560,7 @@ class Game:
         elif item == "SLOW":
             self.slow_t = 10.0
         elif item == "FREEZE":
-            self.freeze_t = 5.0
+            self.freeze_t = 10.0
         elif item == "BOOST":
             self.inv["boost"] = True
         elif item == "SHARD":
@@ -529,18 +579,12 @@ class Game:
 
     def commit(self, i, correct, msg=None, key=None, value=None, note=None,
                *, correct_msg=None, wrong_msg=None):
-        """Validate an answer; only correct answers update progress and Notebook.
-
-        `msg` is retained for compatibility with older calls.
-        New calls should provide separate `correct_msg` and `wrong_msg`.
-        """
         if correct_msg is None:
             correct_msg = msg or "Your answer is correct."
         if wrong_msg is None:
             wrong_msg = msg or "Your answer is not correct. Please try again."
 
         if not correct:
-            # A wrong retry must never erase an answer that was already solved.
             if not self.done[i]:
                 self.right[i] = False
             self.feedback = False
@@ -548,7 +592,6 @@ class Game:
             self.say("Incorrect - try again", 2.5)
             return False
 
-        # Store the previous answer state for the Undo item.
         self.undo_rec = {
             "i": i,
             "ans": dict(self.ans),
@@ -561,11 +604,9 @@ class Game:
 
         self.done[i], self.right[i] = True, True
 
-        # Notebook entries are added only after validation succeeds.
         if note and note not in self.notes:
             self.notes.append(note)
 
-        # The first solved A/B/C puzzle introduces the Notebook and its saved answers.
         if i in (0, 2, 3) and not self.notebook_guide_seen:
             self.notebook_guide_pending = True
 
@@ -608,6 +649,16 @@ class Game:
                 self.show_help = False
                 self.sw[15] = False
             return
+        if self.intro_idx is not None:
+            self.sprite.stop()
+            if ev["back"]:
+                self.intro_idx = None
+            elif ev["tap"]:
+                if self.intro_idx + 1 < len(INTRO_LINES):
+                    self.intro_idx += 1
+                else:
+                    self.intro_idx = None
+            return
         if self.notebook_guide_pending:
             if self.sw[14]:
                 self.notebook_guide_pending = False
@@ -630,13 +681,18 @@ class Game:
             self.sprite.stop(); self.cards_input(ev); return
         if self.sw[14]:
             self.sprite.stop(); return
-        if self.mode == "map": self.map_update(dt, ev)
+        if self.mode == "map":
+            self.slow_t = max(0.0, self.slow_t - dt)
+            self.freeze_t = max(0.0, self.freeze_t - dt)
+            self.map_update(dt, ev)
         else:
             self.sprite.stop(); self.closeup_input(ev)
 
     def speed(self):
+        if self.freeze_t > 0:
+            return 0.0
         s = BASE_SPEED * (1.2 if self.form >= 1 else 1.0)
-        return s * 0.5 if self.slow_t > 0 else s
+        return s * 0.1 if self.slow_t > 0 else s
 
     def blocked(self, x, y):
         r = pygame.Rect(int(x) - FEET_HW, int(y) - FEET_H, FEET_HW * 2, FEET_H)
@@ -728,12 +784,9 @@ class Game:
 
         elif ev["tap"]:
             self.clear_feedback()
-
             u = [self.sw[7 - i] for i in range(4)]
             p = [self.sw[3 - i] for i in range(4)]
-
             self.p2[self.p2_cur] = (u, p)
-
             self.cmsg = (
                 "Stored in Term%d. "
                 "Continue setting the other terms, then press BTNR to check."
@@ -742,22 +795,16 @@ class Game:
 
         elif ev["right"]:
             terms = [(u, p) for u, p in self.p2 if any(u)]
-
             if not terms:
                 self.feedback = False
                 self.cmsg = (
                     "INCORRECT! No terms have been stored yet. "
                     "Please create your K-map expression first."
                 )
-
             else:
                 lits = sum(sum(u) for u, _ in terms)
                 ok = p2_table(self.p2) == P2_TRUTH and lits <= 4
-
-                self.p2_eq = " + ".join(
-                    term_str(u, p) for u, p in terms
-                )
-
+                self.p2_eq = " + ".join(term_str(u, p) for u, p in terms)
                 self.commit(
                     1,
                     ok,
@@ -849,8 +896,7 @@ class Game:
                 4,
                 ok,
                 correct_msg="ACCESS GRANTED. The login passcode is correct. Puzzle 5 is complete.",
-                wrong_msg="ACCESS DENIED. The passcode is incorrect. Check the letters and try again."
-                ,
+                wrong_msg="ACCESS DENIED. The passcode is incorrect. Check the letters and try again.",
                 note="P5 correct login passcode: " + entered_str
             ):
                 self.page = 0
@@ -895,8 +941,50 @@ class Game:
         cy = max(0.0, min(IMG_H - VIEW_H, self.py - 60 - VIEW_H / 2))
         return cx, cy
 
+    def draw_guide(self, ui, w2s):
+        gx, gy = w2s(GUIDE_POS[0], GUIDE_POS[1] + 4)
+        if self.guide_world:
+            ui.blit(self.guide_world, (gx - self.guide_world.get_width() // 2, gy - self.guide_world.get_height()))
+        else:
+            sw_, sh_ = int(SPR_W * ZOOM), int(SPR_H * ZOOM)
+            sx, sy = gx - sw_ // 2, gy - sh_
+            pygame.draw.rect(ui, (35, 115, 175), (sx, sy + sh_ // 3, sw_, sh_ - sh_ // 3), border_radius=6)
+            pygame.draw.circle(ui, (240, 200, 160), (sx + sw_ // 2, sy + sh_ // 6), max(6, sw_ // 3))
+
+    def draw_intro_talk(self, ui):
+        box = pygame.Rect(40, 392, 880, 128)
+        panel = pygame.Surface((box.w, box.h), pygame.SRCALPHA)
+        panel.fill((14, 18, 28, 232))
+        ui.blit(panel, box.topleft)
+        pygame.draw.rect(ui, (255, 230, 120), box, 2, border_radius=10)
+
+        # Portrait box on the left
+        pbox = pygame.Rect(box.x + 16, box.y + 14, 100, 100)
+        pygame.draw.rect(ui, (28, 34, 52), pbox, border_radius=8)
+        pygame.draw.rect(ui, (110, 125, 165), pbox, 2, border_radius=8)
+        if self.guide_portrait:
+            ui.blit(self.guide_portrait, self.guide_portrait.get_rect(center=pbox.center))
+        else:
+            pygame.draw.circle(ui, (240, 200, 160), (pbox.centerx, pbox.centery - 12), 18)
+            pygame.draw.rect(ui, (35, 115, 175), (pbox.centerx - 22, pbox.centery + 8, 44, 34), border_radius=6)
+
+        tx = pbox.right + 18
+        tw = box.right - tx - 20
+        self.txt(ui, GUIDE_NAME, tx, box.y + 12, self.f_m, (255, 230, 120))
+        self.blit_wrap(ui, INTRO_LINES[self.intro_idx], tx, box.y + 42, tw, self.f_m, (245, 245, 250), 24)
+
+        step = self.f_s.render(f"{self.intro_idx + 1} / {len(INTRO_LINES)}", True, (160, 170, 190))
+        ui.blit(step, (tx, box.bottom - 24))
+
+        is_last = self.intro_idx == len(INTRO_LINES) - 1
+        prompt_str = "BTNC: start exam >>" if is_last else "BTNC: next >>"
+        prompt = self.f_s.render(prompt_str, True, (150, 255, 170) if is_last else (170, 200, 255))
+        ui.blit(prompt, (box.right - prompt.get_width() - 20, box.bottom - 24))
+
     def draw_interaction_hint(self, ui):
         """Show a subtle [SEARCH] prompt above the player near an interactable object."""
+        if self.intro_idx is not None:
+            return
         nearby = self.find_near()
         if nearby is None:
             return
@@ -926,7 +1014,6 @@ class Game:
         label = self.f_tiny.render("[SEARCH : %s]" % search_name, True, (225, 230, 240))
         label_rect = label.get_rect(center=(player_x, label_y))
 
-        # A faint background keeps the small prompt readable against the room.
         background = pygame.Surface(
             (label_rect.width + 8, label_rect.height + 4),
             pygame.SRCALPHA
@@ -952,19 +1039,26 @@ class Game:
                 x, y = w2s(o.rect.x, o.rect.y)
                 pygame.draw.rect(ui, (90, 120, 160), (x, y, int(o.rect.w * ZOOM), int(o.rect.h * ZOOM)), 2)
                 ui.blit(self.f_tiny.render(o.name, True, (255, 255, 255)), (x + 2, y + 2))
+
+        if GUIDE_POS[1] <= self.py:
+            self.draw_guide(ui, w2s)
+
         img = self.sprite.image(self.form)
         if img:
-            fx, fy = w2s(self.px, self.py + 4)               # feet position, sprite anchored bottom-centre
+            fx, fy = w2s(self.px, self.py + 4)
             ui.blit(img, (fx - img.get_width() // 2, fy - img.get_height()))
         else:
             sx, sy = w2s(self.px - SPR_W / 2, self.py - SPR_H + 4)
             sw_, sh_ = int(SPR_W * ZOOM), int(SPR_H * ZOOM)
             pygame.draw.rect(ui, FORM_COLORS[self.form], (sx, sy + sh_ // 3, sw_, sh_ - sh_ // 3), border_radius=6)
             pygame.draw.circle(ui, (240, 200, 160), (sx + sw_ // 2, sy + sh_ // 6), max(6, sw_ // 3))
+
+        if GUIDE_POS[1] > self.py:
+            self.draw_guide(ui, w2s)
+
         if not self.lights:
             dk = pygame.Surface((UW, UH)); dk.fill((0, 0, 25)); dk.set_alpha(150); ui.blit(dk, (0, 0))
 
-        # Show the interaction prompt only while an object is within reach.
         self.draw_interaction_hint(ui)
 
         if self.debug:
@@ -1018,7 +1112,7 @@ class Game:
         pygame.draw.rect(s, (240, 240, 235), (40, 56, 560, 376), border_radius=6)
         ink = (30, 40, 130)
         if self.page == 0:
-            lines = ["ROOM 402 - FINAL EXAM", "attendance sheet", "", "registered ........ 0x2A",
+            lines = ["ROOM CPE1119 - FINAL EXAM", "attendance sheet", "", "registered ........ 0x2A",
                      "absent ............ 0b10011", "sick leave ........ 0o21", "",
                      "sitting the exam = ?"]
             for i, l in enumerate(lines): self.txt(s, l, 70, 78 + i * 38, self.f_mono_l, ink)
@@ -1116,7 +1210,6 @@ class Game:
         return "ANSWER: set SW7-SW0, then BTNC"
 
     def app_logo(self, app_name):
-        """Load an optional app logo; return None when its image is unavailable."""
         filenames = {
             "Canva": "app_logo_canva.png",
             "Pinterest": "app_logo_pinterest.png",
@@ -1164,9 +1257,7 @@ class Game:
             self.ctxt(s, cp, 485, y + 8, self.f_s, (255, 220, 100))
 
         self.ctxt(s, "Deduce the secret 3-app code from clues.", 320, 316, self.f_tiny, (180, 220, 180))
-        self.ctxt(s, "The nearby workstation may hold another piece of this trail.", 320, 350,
-                  self.f_tiny, (125, 145, 170))
-        return "Turn off room lights to view clearly"
+        return "Use the 3-app code "
 
     def cu_lightsw(self, s):
         pygame.draw.rect(s, (200, 200, 200), (260, 110, 120, 200), border_radius=10)
@@ -1208,7 +1299,7 @@ class Game:
                      "O 4F  P 50  Q 51  R 52  S 53  T 54  U 55", "V 56  W 57  X 58  Y 59  Z 5A"]
         else:
             lines = ["DOOR - LAYER 2  (5 digits)", "A = whiteboard dial result",
-                     "B = report code from cabinet + laptop 1", "C = receipt code from laptop 2",
+                     "B = report code from cabinet + laptop 1 (Number of bit 1)", "C = receipt code from laptop 2 (Number of bit 1)",
                      "Step 1: S = A + B + C.  Row: A B C S", "        (S has two digits -> 5 digits)",
                      "Step 2: new digit 1 = old position 4,", "        then old 2, 5, 1, 3.",
                      "Example: row 2 4 6 8 9 -> 8 4 9 2 6"]
@@ -1229,19 +1320,14 @@ class Game:
         for pos in range(3):
             r = pygame.Rect(65 + pos * 180, 95, 170, 170)
             idx = d["perm"][pos]
-            
-            # --- ดึงชื่อไอเทมจริงๆ ของการ์ดใบนี้ (เช่น "SHARD", "SLOW", ฯลฯ) ---
-            item_key = CARD_ITEMS[d["round"]][idx] 
-            
+            item_key = CARD_ITEMS[d["round"]][idx]
             revealed = (d["face"] == pos)
             fb_col = CAREERS[idx][1] if (d["round"] == 1 and revealed) else (career_col if d["round"] > 1 else (80, 85, 100))
 
-            # --- ส่ง item_name=item_key เข้าไปให้ CardAssets ---
             drew_img = self.card_art.draw_card(
                 s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col, item_name=item_key
             )
 
-            # ถ้าไม่มีรูปให้ขึ้นข้อความเดิมแทน และถ้ารอบ 2+ เปิดแล้วให้แสดงชื่อไอเทมบนแถบดำโปร่งใส
             if not drew_img:
                 if revealed:
                     self.ctxt(s, d["name"], r.centerx, r.y + 90, self.f_m, (255, 255, 255))
@@ -1250,14 +1336,11 @@ class Game:
                 else:
                     sym = SYMBOLS[self.career][pos] if self.career is not None else career_name
                     self.ctxt(s, sym, r.centerx, r.y + 90, self.f_m, (255, 255, 255))
-            
 
             if d["face"] is None and pos == d["cursor"]:
                 pygame.draw.rect(s, (255, 255, 255), r.inflate(10, 10), 4, border_radius=12)
 
         if d["face"] is not None:
-            # Keep the original card-result layout: the description sits in its
-            # own dark panel, while the continue prompt stays below it.
             pygame.draw.rect(s, (30, 35, 45), (80, 300, 480, 110), border_radius=8)
             self.ctxt(s, "Obtained: " + d["name"], 320, 306, self.f_l, (255, 230, 120))
             for i, line in enumerate(self.wrap(d["desc"], self.f_s, 440)[:3]):
@@ -1373,6 +1456,8 @@ class Game:
         self.draw_hud(ui)
         if self.sw[14]: self.draw_notebook(s)
         if self.deck["active"]: self.draw_cards(ui, s)
+        if self.intro_idx is not None:
+            self.draw_intro_talk(ui)
         if self.notebook_guide_pending and not self.sw[14]:
             self.draw_notebook_guide(ui, s)
         if self.flash > 0:
