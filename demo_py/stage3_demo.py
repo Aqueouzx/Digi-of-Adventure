@@ -52,6 +52,8 @@ def draw_digit(scr, ch, x, y, w, h):
 
 # ---------------- Pygame wrapper for demo_hub.py ----------------
 class Game:
+    ACTIONS = [("win", "Trigger Graduation (Stage 3 Clear)")]
+
     def __init__(self):
         self.standalone = True
         self.g = Stage3Core({n: Level(C.ASSETS / f) for n, f in C.MAPS.items()})
@@ -83,12 +85,22 @@ class Game:
             out["form"] = self.g.form
         return out
 
+    def do_action(self, key):
+        if key == "win":
+            self.g.stage = max(self.g.maps)
+            self.g.gold = True
+            self.g.mode = "win"
+            self.g.notify("")
+
     def poll(self, events):
         confirm = False
         for e in events:
             if e.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
+            elif e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
+                if self.g.mode == "win":
+                    confirm = True
             elif e.type == pygame.KEYDOWN:
                 k = e.key
                 if k in (pygame.K_SPACE, pygame.K_w, pygame.K_UP):

@@ -28,6 +28,7 @@ REGISTRY = [                         # (tab label, python module, class name) - 
     ("Stage 2", "stage2_demo", "Game"),
     ("Cutscene 2-3", "cutscene_2_3", "Game"),
     ("Stage 3", "stage3_demo", "Game"),
+    ("Ending", "cutscene_ending", "Game"),
 ]
 WINDOW = (1152, 760)
 UI_SIZE = (960, 540)
@@ -239,7 +240,11 @@ class Hub:
                     ev = g.poll(events)
                     g.update(dt, ev)
                     if getattr(g, "exit_requested", False):
-                        self.next_stage()
+                        if self.cur == len(REGISTRY) - 1:
+                            g.exit_requested = False
+                            self.switch(0, None)
+                        else:
+                            self.next_stage()
                 g.draw(ui, screen)
             else:
                 self.draw_missing(screen, fonts)
