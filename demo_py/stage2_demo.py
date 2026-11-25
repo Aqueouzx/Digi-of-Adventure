@@ -185,9 +185,9 @@ PART_LABEL = {k: n for k, n, _ in PARTS}
 PART_SHORT = {"not": "74HC04", "and": "74HC08", "or": "74HC32", "seg": "7-seg", "dip": "DIP sw", "r10k": "10k",
               "r220": "220 ohm", "bb": "Breadboard", "psu": "DC supply"}
 TOTAL_PARTS = sum(PART_QTY.values())             # 18
-CARD_BACKS = False                               # False: no *_back pictures, every round shows the card faces right away. True: face-down backs, flip on pick
+CARD_BACKS = True                                # เปิดใช้ระบบหลังการ์ด
 CARD_BOX, CARD_CY = (170, 190), 180                  # card pictures are fitted into this box (never stretched), centre y
-CARD2_AT, CARD3_AT = 8, 18                       # card rounds: none at the start, 2 when 8 parts are found, 3 when all 18 are found
+CARD2_AT, CARD3_AT = 8, 18                       # รอบสุ่มการ์ดตอนสะสมครบ 8 ชิ้น และ 18 ชิ้น
 
 
 R_ITEM, R_OBJ = 50, 70                        # how close (px) you must stand to the spot's walkable point
@@ -430,7 +430,13 @@ def make_walk_mask():
         pygame.draw.polygon(m, (0, 0, 0), poly)
     return m
 
-CARD_ITEMS = {1: ["HINT_HARD", "BOOST", "ARMOR"], 2: ["SHARD", "SLOW", "HINT_SMART"], 3: ["FREEZE", "UNDO", "SHARD"]}
+# --- อัปเดตรายการไอเทมตามที่คุณต้องการ (รอบ 2 ตอนเจอ 8 ชิ้น และ รอบ 3 ตอนเจอ 18 ชิ้น) ---
+CARD_ITEMS = {
+    1: ["HINT_HARD", "SHARD", "FREEZE"],
+    2: ["SHARD", "HINT_SMART", "FREEZE"],
+    3: ["HINT_HARD", "HINT_SMART", "HEART_LOSS"]
+}
+
 ITEM_TEXT = {
     "HINT_HARD": ("Hint", "Use it from the inventory (I)."),
     "BOOST": ("Speed Boost", "Saved for the Obby stage. No effect here."),
@@ -440,7 +446,9 @@ ITEM_TEXT = {
     "HINT_SMART": ("Hint", "Use it from the inventory (I)."),
     "FREEZE": ("Freeze", "Stops moving obstacles for 5 s. Saved for Stage 3."),
     "UNDO": ("Undo", "Reverts your latest wiring change."),
+    "HEART_LOSS": ("Heart Loss", "Oops! You lost 1 heart immediately!"),
 }
+
 CAREERS = [("AIR", (60, 170, 80)), ("EARTH", (220, 190, 50)), ("WATER", (200, 60, 60))]
 SYMBOLS = [["WING", "PLANE", "FART"], ["SHIP", "GEAR", "MONEY"], ["WORM", "WHITE FLAG", "PLUG"]]
 PERMS = list(itertools.permutations([0, 1, 2]))
@@ -538,93 +546,18 @@ class Game:
         # ---- demo hub interface (for stage 2) ----
     CHECKPOINTS = [
         ("start", "Start of stage"),
-        ("parts", "All 4 parts collected"),
-        ("bench", "Decoder bench powered on"),
+        ("parts", "8 parts collected (Round 4 card)"),
+        ("bench", "All 18 parts collected (Round 5 card)"),
         ("qa1", "Passed QA round 1"),
         ("qa3", "All 3 QA rounds cleared (Door open)"),
         ("clear", "Stage 2 cleared")
     ]
     ACTIONS = [
-        ("give_parts", "Collect all 4 parts"),
+        ("give_parts", "Collect all 18 parts"),
         ("give_armor", "Give 1 Armor"),
         ("wrong_qa", "Trigger QA failure penalty")
     ]
 
-    def start(self, handoff=None):
-        self.reset_stage(True)
-        self.show_help = False
-
-    def get_handoff(self):
-        return {
-            "hearts": getattr(self, "hearts", 3),
-            "form": getattr(self, "form", 0),
-            "armor": getattr(self, "armor", 0),
-            "boost": getattr(self, "boost", False),
-            "shards": getattr(self, "shard", 0)
-        }
-
-    def get_progress(self):
-        if getattr(self, "state", "") == "clear":
-            return 5
-        # เช็กความคืบหน้าตามกลไกของ Stage 2
-        parts_collected = len(getattr(self, "parts", {})) >= 4
-        qa_rnd = getattr(self, "rnd", 0)
-        if qa_rnd >= 3:
-            return 4
-        if qa_rnd >= 1:
-            return 3
-        if parts_collected:
-            # สมมติถ้าเปิดบอร์ด/เดคโคเดอร์แล้ว ให้ดันขึ้นไปขั้น 2
-            return 2 if getattr(self, "page", 0) > 0 else 1
-        return 0
-
-    def set_hearts(self, n):
-        self.hearts = max(1, min(3, n))
-        if getattr(self, "state", "") == "over":
-            self.state = "play"
-
-    def set_form(self, i):
-        self.form = max(0, min(3, i))
-
-    def toggle_debug(self):
-        self.debug = not getattr(self, "debug", False)
-
-    def jump_to(self, key):
-        career = self.career
-        self.career = career if career is not None else 1
-        self.reset_stage(True)
-        self.show_help = False
-        if key == "start":
-            return
-        if key == "clear":
-            self.state = "clear"
-            return
-        # จำลองการกระโดดข้ามขั้นตอนตาม Checkpoint
-        if key in ("parts", "bench", "qa1", "qa3"):
-            # บังคับให้เก็บชิ้นส่วนครบ 4 ชิ้น
-            if hasattr(self, "parts"):
-                self.parts = {"and1": True, "and2": True, "or": True, "not": True}
-        if key in ("bench", "qa1", "qa3"):
-            self.page = 1  # เปิดหน้าจอเดคโคเดอร์
-        if key in ("qa1", "qa3"):
-            self.rnd = 1   # ผ่านรอบที่ 1
-        if key == "qa3":
-            self.rnd = 3   # ผ่านครบ 3 รอบ ปลดล็อกประตู
-
-    def do_action(self, key):
-        if key == "give_parts":
-            if hasattr(self, "parts"):
-                self.parts = {"and1": True, "and2": True, "or": True, "not": True}
-                self.say("[DEBUG] Collected all 4 parts")
-        elif key == "give_armor":
-            if hasattr(self, "armor"):
-                self.armor = min(3, self.armor + 1)
-                self.say("Armor +1")
-        elif key == "wrong_qa":
-            # จำลองการตอบคำถามผิดเพื่อทดสอบระบบหักหัวใจ/เกราะ
-            if hasattr(self, "hearts"):
-                self.hearts = max(0, self.hearts - 1)
-                self.say("[DEBUG] Triggered QA penalty (-1 heart)")
     def __init__(self):
         self.f_tiny = pygame.font.Font(None, 15)
         self.f_s = pygame.font.Font(None, 20)
@@ -654,6 +587,7 @@ class Game:
         self.reach = self.flood(SPAWN)
         for o in OBJS + [NPC_OBJ] + ITEM_SPOTS + HINT_SPOTS:
             self.set_anchor(o)
+        self.career = 0
         self.reset_stage(True)
         self.card_art = card_assets.CardAssets(ASSET_DIR) if card_assets else None
         self.standalone = True          # demo_hub sets this to False when it runs the game
@@ -711,12 +645,6 @@ class Game:
             self.boost = bool(handoff.get("boost", False))
             self.shard = int(handoff.get("shards", 0))
 
-            # --- [จุดที่เพิ่ม] รับค่า career มาจากฮับหรือสเตจก่อนหน้า ---
-
-            if "career" in handoff:
-
-                self.career = handoff["career"]
-
     def get_handoff(self):
         return {
             "hearts": self.hearts,
@@ -728,11 +656,17 @@ class Game:
         }
 
     def get_progress(self):
+
         if self.state == "clear": return 5
+
         if self.rnd >= ROUNDS: return 4
-        if self.r_run[3] or self.rnd >= 2: return 3
-        if self.parts_total() >= TOTAL_PARTS: return 2
-        if self.r_run[2] or self.parts_total() >= CARD2_AT: return 1
+
+        if self.r_run[3] or self.rnd >= 1: return 3
+
+        if self.r_run[2] or self.parts_total() >= CARD3_AT: return 2
+
+        if self.parts_total() >= CARD2_AT: return 1
+
         return 0
 
     def set_hearts(self, n):
@@ -748,59 +682,59 @@ class Game:
 
     def jump_to(self, key):
         form = self.form
+        if self.career is None:
+            self.career = 0
+        current_career = self.career
+        
         self.reset_stage(True)
         self.form = form
+        self.career = current_career
         self.show_help = False
+        
         if key == "start":
             return
         if key == "clear":
             self.state, self.form = "clear", 2
             return
 
-        # ข้ามการ์ดรอบ 1 และข้ามคัตซีน Boss เดินเข้าห้อง (ให้ Boss นั่งรอที่โต๊ะเลย)
-        self.career = 0
         self.r_run[1] = self.r_done[1] = True
         self.intro_started, self.cutscene, self.talk = True, False, None
         self.npc = {"x": NPC_SEAT[0], "y": NPC_SEAT[1], "state": "sit", "path": [], "walk": False}
 
-        if key == "r2":
+        if key in ("parts", "bench", "qa1", "qa3"):
+            # ข้ามไปรอบ 8 ชิ้น (กระตุ้นการ์ดรอบ 2 ทันที)
             for sp in ITEM_SPOTS[:CARD2_AT]:
                 self.done_spots.add(sp.id)
                 self.found[sp.part] += 1
+            self.card_start(2)
             return
 
-        # ตั้งแต่ parts / r3 / door ขึ้นไป: เก็บครบ 18 ชิ้น + ข้ามการ์ดรอบ 2
-        self.cheat_parts()
-        self.r_run[2] = self.r_done[2] = True
-        self.new_round()
-
-        if key == "parts":
-            return
-
-        # ต่อวงจรให้เสร็จพร้อมเทสต์
-        self.w = dict(REF)
-        if key == "r3":
-            self.rnd = 2
+        if key in ("bench", "qa1", "qa3"):
+            self.cheat_parts()
+            self.r_run[2] = self.r_done[2] = True
+            # กระตุ้นการ์ดรอบ 3 (ตอนหาครบ 18 ชิ้น) ให้เด้งขึ้นมาทันที
+            self.card_start(3)
             self.new_round()
-            return
+            self.page = 1  # เปิดหน้าจอเดคโคเดอร์
 
-        if key == "door":
+        if key in ("qa1", "qa3"):
+            self.rnd = 1
+
+        if key == "qa3":
             self.rnd = ROUNDS
             self.r_run[3] = self.r_done[3] = True
-            self.say("All 3 QA passed! Go to the exit door.")
+            self.w = dict(REF)  # ต่อวงจรให้อัตโนมัติ
+            self.say("All 3 QA rounds cleared (Door open)")
 
     def do_action(self, key):
-        if key == "auto_wire":
-            self.auto_wire()
-            self.say("Circuit auto-wired! Talk to the Boss.")
-        elif key == "skill_ready":
-            self.play_t = SKILL_WAIT
-            self.skill_used = False
-            self.skill_t = 0.0
-            self.say("Workshop-shirt skill ready! (Press E)")
-        elif key == "armor":
+        if key == "give_parts":
+            self.cheat_parts()
+            self.say("[DEBUG] Collected all parts")
+        elif key == "give_armor":
             self.armor = min(3, self.armor + 1)
             self.say("Armor +1")
+        elif key == "wrong_qa":
+            self.damage()
 
     # ---------------- input ----------------
     def poll(self, events):
@@ -889,8 +823,6 @@ class Game:
                 return v
 
     def card_start(self, r):
-        # ถ้ารอบ 2 (รอบแรกของ Stage 2) ให้สอดรับกับ career ที่เคยเลือกไว้จาก Stage 1
-        # แต่ถ้าไม่มี ให้สุ่มใหม่ตามปกติ
         self.deck = {"active": True, "round": r, "perm": PERMS[self.lfsr_pick(6)], "cursor": 1, "face": None}
         self.r_run[r] = True
 
@@ -929,6 +861,15 @@ class Game:
             if self.shard >= 2:
                 self.shard = 0
                 self.armor = cap(self.armor)
+        elif item == "HEART_LOSS":
+            if self.armor > 0:
+                self.armor -= 1
+                self.say("ARMOR PROTECTED!")
+            else:
+                self.hearts = max(0, self.hearts - 1)
+                self.say("Heart Loss card! -1 heart")
+                if self.hearts <= 0:
+                    self.state, self.over_until = "over", time.time() + 3.0
 
     # ---------------- part hunt ----------------
     def pickup(self, sp):
@@ -1823,11 +1764,14 @@ class Game:
 
             drew_img = False
             if self.card_art:                                   # card pictures from demo_py/card_assets.py + assets/
-                drew_img = self.card_art.draw_card(s, r, d["round"], self.career, pos, revealed, slot_idx=idx, fallback_color=fb_col)
-            else:
-                pygame.draw.rect(s, fb_col, r, border_radius=10)
+                _, drawn_r = self.card_art.draw_card(
+                    s, r, d["round"], self.career if self.career is not None else 0, pos, revealed,
+                    slot_idx=idx, fallback_color=fb_col, item_name=item
+                )
+                drew_img = True
 
             if not drew_img:                                    # no picture found: plain card with text
+                pygame.draw.rect(s, fb_col, r, border_radius=10)
                 if d["round"] == 1:
                     if revealed:
                         self.ctxt(s, CAREERS[idx][0], r.centerx, r.y + 60, self.f_m)
@@ -1839,11 +1783,6 @@ class Game:
                         self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
                     if revealed:
                         self.ctxt(s, item_name, r.centerx, r.y + 120, self.f_s)
-            elif revealed and d["round"] > 1:                   # picture + round 2/3: item name on a dark strip
-                tag = pygame.Surface((r.w, 34), pygame.SRCALPHA)
-                tag.fill((0, 0, 0, 180))
-                s.blit(tag, (r.x, r.bottom - 42))
-                self.ctxt(s, item_name, r.centerx, r.bottom - 34, self.f_s, (255, 230, 120))
 
             if d["face"] is None and pos == d["cursor"]:
                 pygame.draw.rect(s, (255, 255, 255), r.inflate(10, 10), 4, border_radius=12)
