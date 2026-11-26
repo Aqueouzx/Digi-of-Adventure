@@ -23,7 +23,10 @@ def font(size,thai=False):
         for path in fonts:
             if path.is_file():
                 return ImageFont.truetype(str(path),size)
-    return ImageFont.load_default(size=size)
+    try:
+        return ImageFont.load_default(size=size)
+    except TypeError:
+        return ImageFont.load_default()
 
 def text(d,xy,message,size=12,color=IVORY,anchor="la",outline=0):
     thai=any("\u0e00"<=ch<="\u0e7f" for ch in message)
