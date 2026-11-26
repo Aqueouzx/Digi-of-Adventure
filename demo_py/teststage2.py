@@ -18,7 +18,7 @@ except ImportError:
 SCR_W, SCR_H, PANEL_H = 1152, 648, 112      # window: game area 16:9 + virtual board panel
 UW, UH = 960, 540                           # internal UI surface (16:9), scaled up to the window
 CU_X, CU_W = 160, 640                       # close-up panel inside the UI surface
-FEET_HW, FEET_H = 10, 10                    # player collision box (feet): 20 x 10 px
+FEET_HW, FEET_H = 8, 8                      # player collision box (feet): 16 x 8 px (small box = easier to walk between desks)
 SPR_W, SPR_H = 30, 62                       # placeholder size / drawn sprite height
 BASE_SPEED = 260.0                          # px / second
 LONG_PRESS_S = 0.8
@@ -185,9 +185,9 @@ PART_LABEL = {k: n for k, n, _ in PARTS}
 PART_SHORT = {"not": "74HC04", "and": "74HC08", "or": "74HC32", "seg": "7-seg", "dip": "DIP sw", "r10k": "10k",
               "r220": "220 ohm", "bb": "Breadboard", "psu": "DC supply"}
 TOTAL_PARTS = sum(PART_QTY.values())             # 18
-CARD_BACKS = False                               # False: no *_back pictures, every round shows the card faces right away. True: face-down backs, flip on pick
+CARD_BACKS = True                                # เปิดใช้ระบบหลังการ์ด
 CARD_BOX, CARD_CY = (170, 190), 180                  # card pictures are fitted into this box (never stretched), centre y
-CARD2_AT, CARD3_AT = 8, 18                       # card rounds: none at the start, 2 when 8 parts are found, 3 when all 18 are found
+CARD2_AT, CARD3_AT = 8, 18                       # รอบสุ่มการ์ดตอนสะสมครบ 8 ชิ้น และ 18 ชิ้น
 
 
 R_ITEM, R_OBJ = 50, 70                        # how close (px) you must stand to the spot's walkable point
@@ -301,12 +301,14 @@ for _i, _s in enumerate(SEGS):                   # the seven segment pins of the
 RAIL_X = [214, 294, 374, 454, 534]
 RAIL_LINES = [("1", 122), ("0", 246), ("1", 298), ("0", 478)]     # +5V / GND rails (click anywhere on the line)
 SRC_POS["C"], SRC_POS["B"], SRC_POS["A"] = [(160, 238)], [(160, 270)], [(160, 302)]
-SRC_POS["1"] = [(x, y) for k, y in RAIL_LINES if k == "1" for x in RAIL_X]
-SRC_POS["0"] = [(x, y) for k, y in RAIL_LINES if k == "0" for x in RAIL_X]
+SUPPLY_5V, SUPPLY_GND = (130, 160), (150, 160)   # the red / black terminals of the bench supply
+SRC_POS["1"] = [(x, y) for k, y in RAIL_LINES if k == "1" for x in RAIL_X] + [SUPPLY_5V]
+SRC_POS["0"] = [(x, y) for k, y in RAIL_LINES if k == "0" for x in RAIL_X] + [SUPPLY_GND]
 SRC_LIST = (["1", "0", "C", "B", "A"] + ["N1", "N2", "N3"] + ["A%d" % i for i in range(1, 5)] +
             ["O%d" % i for i in range(1, 9)] + ["R" + s for s in SEGS])
-CUR_CLEAR = len(SINKS)
-N_CUR = len(SINKS) + 1
+CUR_SRC = [(k, p) for k, pts in SRC_POS.items() for p in pts]   # every colored output / rail dot / supply terminal is a cursor stop too
+CUR_CLEAR = len(SINKS) + len(CUR_SRC)
+N_CUR = CUR_CLEAR + 1
 BTN_CLEAR = pygame.Rect(790, 58, 154, 34)
 BTN_AUTO = pygame.Rect(636, 58, 146, 34)         # TEST_MODE only
 
@@ -392,21 +394,19 @@ def src_color(s):
 
 # ---------------- room layout (px in the 960x540 game area, matches bg.jpg) ----------------
 # Everything inside FLOOR is walkable except the SOLIDS: desks, chairs, partitions and furniture of the picture.
-FLOOR = pygame.Rect(100, 176, 830, 350)
+FLOOR = pygame.Rect(100, 176, 830, 352)         # bottom edge 528 = the inner frame of the picture: the lane in front of the bottom desks is walkable
 SOLIDS = [
     [(100, 176), (180, 176), (180, 286), (100, 286)],                       # left wall / whiteboard base
     [(186, 176), (258, 176), (258, 272), (186, 272)],                       # gray cabinet + plant
     [(262, 182), (288, 182), (288, 220), (262, 220)],                       # pink beanbag
-    [(100, 286), (178, 286), (178, 376), (100, 376)],                       # plant + water cooler
-    [(100, 376), (150, 376), (150, 462), (100, 462)],                       # coffee counter
-    [(208, 288), (246, 288), (246, 380), (208, 380)],                       # black chair (left corridor)
+    [(100, 286), (172, 286), (172, 376), (100, 376)],                       # plant + water cooler
+    [(100, 376), (140, 376), (140, 462), (100, 462)],                       # coffee counter (right edge as in the picture)
+                                                                            # (black chair in the left corridor: no solid, you can walk past / over it)
     [(322, 198), (636, 198), (636, 270), (322, 270)],                       # top row: desks, chairs, partitions
     [(284, 288), (656, 288), (656, 394), (272, 394), (272, 330)],           # middle row (open lanes above and below it)
     [(272, 412), (690, 412), (690, 494), (218, 494), (218, 440), (272, 440)],   # bottom row: back panels + desks
-    [(232, 494), (292, 494), (292, 510), (232, 510)],                       # bottom row chairs (you can walk in front of them)
-    [(466, 494), (522, 494), (522, 510), (466, 510)],
-    [(546, 494), (606, 494), (606, 510), (546, 510)],
-    [(206, 385), (224, 385), (204, 470), (190, 527), (163, 527), (178, 470)],   # bottom-left partition
+                                                                            # (bottom row chairs: no solid, you walk in front of them along the bottom lane y 502-527)
+    [(207, 383), (216, 383), (200, 470), (194, 484), (176, 484), (174, 470)],   # bottom-left partition (it ends at y 484: the bottom lane passes in front of it, left <-> right)
     [(684, 381), (698, 381), (704, 494), (690, 494)],                       # bottom-right partition
     [(701, 176), (780, 176), (780, 262), (701, 262)],                       # shelf rack under the projector
     [(748, 258), (776, 258), (776, 284), (748, 284)],                       # plant pot on the rack
@@ -417,7 +417,7 @@ SOLIDS = [
     [(745, 383), (803, 383), (803, 429), (745, 429)],                       # cardboard box + rolled posters
     [(843, 274), (930, 274), (930, 470), (843, 470)],                       # bookshelf
     [(873, 374), (930, 374), (930, 526), (873, 526)],                       # big plant
-    [(719, 499), (771, 499), (771, 526), (719, 526)],                       # box at the bottom edge
+                                                                            # (the flat box at the bottom edge is no solid either: you can pass in front of it)
 ]
 SPAWN = (682.0, 300.0)
 
@@ -430,7 +430,12 @@ def make_walk_mask():
         pygame.draw.polygon(m, (0, 0, 0), poly)
     return m
 
-CARD_ITEMS = {1: ["HINT_HARD", "BOOST", "ARMOR"], 2: ["SHARD", "SLOW", "HINT_SMART"], 3: ["FREEZE", "UNDO", "SHARD"]}
+CARD_ITEMS = {
+    1: ["HINT_HARD", "SHARD", "FREEZE"],
+    2: ["SHARD", "HINT_SMART", "FREEZE"],
+    3: ["HINT_HARD", "HINT_SMART", "HEART_LOSS"]
+}
+
 ITEM_TEXT = {
     "HINT_HARD": ("Hint", "Use it from the inventory (I)."),
     "BOOST": ("Speed Boost", "Saved for the Obby stage. No effect here."),
@@ -438,9 +443,11 @@ ITEM_TEXT = {
     "SHARD": ("Armor Shard", "Collect 2 shards to forge 1 Armor."),
     "SLOW": ("Slow", "You walk slower for 10 seconds."),
     "HINT_SMART": ("Hint", "Use it from the inventory (I)."),
-    "FREEZE": ("Freeze", "Stops moving obstacles for 5 s. Saved for Stage 3."),
+    "FREEZE": ("Freeze", "You are frozen in place for 10 seconds."),
     "UNDO": ("Undo", "Reverts your latest wiring change."),
+    "HEART_LOSS": ("Heart Loss", "Oops! You lost 1 heart immediately!"),
 }
+
 CAREERS = [("AIR", (60, 170, 80)), ("EARTH", (220, 190, 50)), ("WATER", (200, 60, 60))]
 SYMBOLS = [["WING", "PLANE", "FART"], ["SHIP", "GEAR", "MONEY"], ["WORM", "WHITE FLAG", "PLUG"]]
 PERMS = list(itertools.permutations([0, 1, 2]))
@@ -468,7 +475,7 @@ OBJS = [
 ]
 NPC_NAME = "Boss"
 NPC_OBJ = Obj("npc", "npc", "Talk to the Boss", 815, 395, (795, 285, 50, 60))
-NPC_SEAT = (818.0, 336.0)                        # the black chair at the desk on the right
+NPC_SEAT = (818.0, 336.0)
 NPC_SPEED = 150.0
 INTRO_LINES = [
     "Welcome to the lab, intern! I am your Boss.",
@@ -485,14 +492,12 @@ INTRO_LINES = [
     "I will be at my desk on the right. Good luck!",
 ]
 PAGED = ("whiteboard", "bench")
-SKILL_LINE = 3                                   # intro line shown while the Boss demonstrates the skill
-SKILL_SECS, SKILL_WAIT = 10.0, 120.0             # reveal time / play time before the skill can be used again
-SKILL_BTN = pygame.Rect(UW - 160, 50, 146, 28)   # on-screen skill button (map view)
-# partition rows you can walk BEHIND: (x0, x1, walk-lane bottom, y of the partition's top edge in the picture).
-# While your feet are in that lane, everything below the partition's top edge is covered by the room picture.
+SKILL_LINE = 3
+SKILL_SECS, SKILL_WAIT = 10.0, 120.0
+SKILL_BTN = pygame.Rect(UW - 160, 50, 146, 28)
 ROW_LANES = [(322, 636, 198, 186), (284, 656, 288, 270), (272, 690, 412, 413)]
 LANE_H = 24
-ZOOM_SECS, ZOOM_MAX = 2.2, 2.6                   # camera zoom when a part is found
+ZOOM_SECS, ZOOM_MAX = 2.2, 2.6
 
 
 def draw_set(scr, on, x, y, w, h, off=(50, 22, 22)):
@@ -527,14 +532,28 @@ def bez(p0, p1, p2, p3, n=22):
 def wire_pts(a, b):
     (x1, y1), (x2, y2) = a, b
     if abs(y2 - y1) < 40:
-        if y2 != y1: off = 26 if y2 > y1 else -26          # short vertical hop (e.g. rail -> chip pin): stay close
-        else: off = -45 if y1 < 300 else 45                # same height: arc over / under
+        if y2 != y1: off = 26 if y2 > y1 else -26
+        else: off = -45 if y1 < 300 else 45
         return bez(a, (x1, y1 + off), (x2, y2 + off), b)
     m = (y1 + y2) / 2
     return bez(a, (x1, m), (x2, m), b)
 
 
 class Game:
+    CHECKPOINTS = [
+        ("start", "Start of stage"),
+        ("parts", "8 parts collected"),
+        ("bench", "All 18 parts collected"),
+        ("qa3", "All 3 QA rounds cleared (Door open)"),
+        ("clear", "Stage 2 cleared")
+    ]
+    ACTIONS = [
+        ("give_parts", "Collect all 18 parts"),
+        ("bench_check", "All 18 parts (check 4th card)"),
+        ("give_armor", "Give 1 Armor"),
+        ("wrong_qa", "Trigger QA failure penalty")
+    ]
+
     def __init__(self):
         self.f_tiny = pygame.font.Font(None, 15)
         self.f_s = pygame.font.Font(None, 20)
@@ -548,7 +567,7 @@ class Game:
               "NOT FOUND (looked in: %s)" % ", ".join(ASSET_DIRS))
         self.spr = PlayerSprite(ASSET_DIR, SPR_H)
         self.npc_img, self.npc_img_sit = self.scaled("npc_stand.png", SPR_H), self.scaled("npc_sit.png", 48)
-        self.boss = BossSprite(SPR_H, 48)                                           # assets/Boss*.png (see BossSprite)
+        self.boss = BossSprite(SPR_H, 48)
         self.cu_cache = {}
         self.bb_surf = self.make_breadboard()
         self.sw = [False] * 16
@@ -564,9 +583,10 @@ class Game:
         self.reach = self.flood(SPAWN)
         for o in OBJS + [NPC_OBJ] + ITEM_SPOTS + HINT_SPOTS:
             self.set_anchor(o)
+        self.career = 0
         self.reset_stage(True)
-        self.card_art = card_assets.CardAssets(ASSET_DIR) if card_assets else None
-        self.standalone = True          # demo_hub sets this to False when it runs the game
+        self.card_art = card_assets.CardAssets(ASSET_DIR, (170, 170)) if card_assets else None
+        self.standalone = True
 
     def make_breadboard(self):
         s = pygame.Surface((928, 384))
@@ -583,24 +603,25 @@ class Game:
         self.mode, self.cur, self.page, self.cmsg = "map", None, 0, ""
         self.state = "play"
         self.exit_requested = False
-        self.found = {k: 0 for k in PART_QTY}                       # parts collected so far
+        self.found = {k: 0 for k in PART_QTY}
         self.done_spots, self.read_hints = set(), set()
-        self.rnd, self.codes, self.qa_pairs = 0, None, None         # QA tests cleared / current test inputs / the 3 pairs
-        self.w = {}                                                 # wiring: sink -> source
-        self.wcur, self.wsrc, self.wprev, self.msel = 0, None, None, None
+        self.rnd, self.codes, self.qa_pairs = 0, None, None
+        self.w = {}
+        self.wcur, self.wsrc, self.wprev, self.msel, self.psel = 0, None, None, None, None   # psel: a white pin picked first (then click its source)
         self.undo_rec = None
         self.notes, self.hints_seen = [], []
         self.hh = self.hs = self.undo = self.freeze = self.armor = self.shard = 0
-        self.boost, self.slow_t = False, 0.0
+        self.boost, self.slow_t, self.freeze_t = False, 0.0, 0.0
         self.hearts = 3
         self.deck = {"active": False, "round": 1, "perm": (0, 1, 2), "cursor": 1, "face": None}
-        self.career = self.lfsr_pick(3)                             # no card draw at the start: the career is picked silently (used by the round 2 / 3 card pictures)
-        self.r_run = {1: True, 2: False, 3: False}                  # round 1 (the start card) is skipped
+        self.card_backs = [self.lfsr_pick(3), self.lfsr_pick(3)]   # 2 cards from Stage 1
+        self.career = self.card_backs[0]
+        self.r_run = {1: True, 2: False, 3: False}
         self.r_done = {1: True, 2: False, 3: False}
         self.hint_popup, self.hint_title, self.toast, self.inv_cur = None, "HINT", ("", 0), 0
         self.flash, self.over_until = 0.0, 0.0
         self.play_t, self.skill_t, self.skill_used, self.zoom = 0.0, 0.0, False, None
-        self.npc = {"x": 622.0, "y": 186.0, "state": "off", "path": [], "walk": False}   # the Boss
+        self.npc = {"x": 622.0, "y": 186.0, "state": "off", "path": [], "walk": False}
         self.talk, self.intro_started, self.cutscene = None, False, False
         if self.spr: self.spr.reset()
 
@@ -614,7 +635,13 @@ class Game:
         self.reset_stage(True)
         self.show_help = False
         if handoff:
-            if handoff.get("career") in (0, 1, 2): self.career = handoff["career"]      # career chosen in the previous stage (optional)
+            if isinstance(handoff.get("card_backs"), (list, tuple)) and len(handoff["card_backs"]) >= 2:
+                self.card_backs = [int(x) % 3 for x in handoff["card_backs"][:2]]
+                self.career = handoff["career"] if handoff.get("career") in (0, 1, 2) else self.card_backs[0]
+            elif handoff.get("career") in (0, 1, 2):
+                self.career = handoff["career"]
+                second = handoff["card2"] if handoff.get("card2") in (0, 1, 2) else self.lfsr_pick(3)
+                self.card_backs = [self.career, second]
             self.hearts = max(1, min(3, handoff.get("hearts", 3)))
             self.form = max(0, min(3, handoff.get("form", 1)))
             self.armor = max(0, min(3, handoff.get("armor", 0)))
@@ -629,14 +656,14 @@ class Game:
             "boost": self.boost,
             "shards": self.shard,
             "career": self.career,
+            "card_backs": list(self.card_backs),
         }
 
     def get_progress(self):
-        if self.state == "clear": return 5
-        if self.rnd >= ROUNDS: return 4
-        if self.r_run[3] or self.rnd >= 2: return 3
+        if self.state == "clear": return 4
+        if self.rnd >= ROUNDS: return 3
         if self.parts_total() >= TOTAL_PARTS: return 2
-        if self.r_run[2] or self.parts_total() >= CARD2_AT: return 1
+        if self.parts_total() >= CARD2_AT: return 1
         return 0
 
     def set_hearts(self, n):
@@ -652,59 +679,77 @@ class Game:
 
     def jump_to(self, key):
         form = self.form
+        if self.career is None:
+            self.career = 0
+        current_career = self.career
+        stage1_backs = list(self.card_backs[:2])
+        
         self.reset_stage(True)
         self.form = form
+        self.career = current_career
+        if len(stage1_backs) == 2:
+            self.card_backs = stage1_backs
         self.show_help = False
+        
         if key == "start":
             return
         if key == "clear":
             self.state, self.form = "clear", 2
             return
 
-        # ข้ามการ์ดรอบ 1 และข้ามคัตซีน Boss เดินเข้าห้อง (ให้ Boss นั่งรอที่โต๊ะเลย)
-        self.career = 0
         self.r_run[1] = self.r_done[1] = True
         self.intro_started, self.cutscene, self.talk = True, False, None
         self.npc = {"x": NPC_SEAT[0], "y": NPC_SEAT[1], "state": "sit", "path": [], "walk": False}
 
-        if key == "r2":
+        if key in ("parts", "bench", "qa3"):
             for sp in ITEM_SPOTS[:CARD2_AT]:
                 self.done_spots.add(sp.id)
                 self.found[sp.part] += 1
-            return
+            if key == "parts":
+                self.card_start(2)
+                return
 
-        # ตั้งแต่ parts / r3 / door ขึ้นไป: เก็บครบ 18 ชิ้น + ข้ามการ์ดรอบ 2
-        self.cheat_parts()
-        self.r_run[2] = self.r_done[2] = True
-        self.new_round()
-
-        if key == "parts":
-            return
-
-        # ต่อวงจรให้เสร็จพร้อมเทสต์
-        self.w = dict(REF)
-        if key == "r3":
-            self.rnd = 2
+        if key in ("bench", "qa3"):
+            self.cheat_parts()
+            self.r_run[2] = self.r_done[2] = True
             self.new_round()
-            return
+            self.page = 1
+            if key == "bench":
+                self.card_backs = [0, 1, 2]
+                self.card_start(3)
+                return
 
-        if key == "door":
+        if key == "qa3":
             self.rnd = ROUNDS
             self.r_run[3] = self.r_done[3] = True
-            self.say("All 3 QA passed! Go to the exit door.")
+            self.w = dict(REF)
+            self.say("All 3 QA rounds cleared (Door open)")
 
     def do_action(self, key):
-        if key == "auto_wire":
-            self.auto_wire()
-            self.say("Circuit auto-wired! Talk to the Boss.")
-        elif key == "skill_ready":
-            self.play_t = SKILL_WAIT
-            self.skill_used = False
-            self.skill_t = 0.0
-            self.say("Workshop-shirt skill ready! (Press E)")
-        elif key == "armor":
+        if key == "give_parts":
+            self.cheat_parts()
+            self.say("[DEBUG] Collected all 18 parts")
+        elif key == "bench_check":
+            self.show_help = False
+            self.zoom = None
+            self.intro_started, self.cutscene, self.talk = True, False, None
+            self.npc = {"x": NPC_SEAT[0], "y": NPC_SEAT[1], "state": "sit", "path": [], "walk": False}
+            self.cheat_parts()
+            if self.codes is None and self.rnd < ROUNDS:
+                self.new_round()
+            if not self.r_done[2]:
+                self.say("All 18 parts! Pick card 3 first; 4th checks backs.")
+            elif len(self.card_backs) == 3 and len(set(self.card_backs)) == 3 and not self.r_run[3]:
+                self.say("All 3 card backs differ -> 4th card ready!")
+            elif self.r_run[3]:
+                self.say("4th card round already used.")
+            else:
+                self.say("Card backs not all different -> total stays 3.")
+        elif key == "give_armor":
             self.armor = min(3, self.armor + 1)
             self.say("Armor +1")
+        elif key == "wrong_qa":
+            self.damage()
 
     # ---------------- input ----------------
     def poll(self, events):
@@ -717,7 +762,7 @@ class Game:
                 for i, r in enumerate(self.sw_rects):
                     if r.collidepoint(e.pos):
                         self.sw[i] = not self.sw[i]
-                if e.pos[1] < SCR_H:                 # click inside the game area -> UI-surface coordinates
+                if e.pos[1] < SCR_H:
                     p = (e.pos[0] * UW / SCR_W, e.pos[1] * UH / SCR_H)
                     if e.button == 1: ev["click"] = p
                     elif e.button == 3: ev["rclick"] = p
@@ -751,7 +796,7 @@ class Game:
             ev["back"] = 1
         return ev
 
-    def cheat_parts(self):               # TEST_MODE (F7): get all 18 parts at once
+    def cheat_parts(self):
         for sp in ITEM_SPOTS:
             if sp.id not in self.done_spots:
                 self.done_spots.add(sp.id)
@@ -759,7 +804,7 @@ class Game:
         self.notes.append("[TEST] all parts collected")
         self.say("[TEST] all 18 parts collected")
 
-    def auto_wire(self):                 # TEST_MODE (F8 / board button): the whole circuit is wired for you
+    def auto_wire(self):
         if self.parts_total() < TOTAL_PARTS: self.cheat_parts()
         if self.codes is None and self.rnd < ROUNDS: self.new_round()
         self.rec_undo()
@@ -785,7 +830,7 @@ class Game:
         q = ((q << 1) | fb) & 0xFFFF
         self.lfsr = q if q else 0xACE1
 
-    def lfsr_pick(self, n):              # LFSR value 0..n-1 (n <= 8): take 3 bits, retry if out of range
+    def lfsr_pick(self, n):
         while True:
             self.lfsr_step()
             v = self.lfsr & 7
@@ -796,23 +841,39 @@ class Game:
         self.deck = {"active": True, "round": r, "perm": PERMS[self.lfsr_pick(6)], "cursor": 1, "face": None}
         self.r_run[r] = True
 
-    def card_trigger(self):              # round 1: skipped | round 2: 8 parts found | round 3: all 18 parts found
-        if self.deck["active"]:
+    def card_trigger(self):
+        if self.deck["active"] or self.zoom:
             return
-        if self.zoom: return                                        # wait until the found-part zoom has finished
-        elif self.r_done[1] and not self.r_run[2] and self.parts_total() >= CARD2_AT: self.card_start(2)
-        elif self.r_done[2] and not self.r_run[3] and self.parts_total() >= CARD3_AT: self.card_start(3)
+        if self.r_done[1] and not self.r_run[2] and self.parts_total() >= CARD2_AT:
+            self.card_start(2)
+        elif (
+            self.r_done[2]
+            and not self.r_run[3]
+            and self.parts_total() >= CARD3_AT
+            and len(self.card_backs) == 3
+            and len(set(self.card_backs)) == 3
+        ):
+            self.card_start(3)
 
     def cards_input(self, ev):
         d = self.deck
         if d["face"] is None:
-            if ev["left"]: d["cursor"] = (d["cursor"] - 1) % 3
-            elif ev["right"]: d["cursor"] = (d["cursor"] + 1) % 3
+            if ev["left"]:
+                d["cursor"] = (d["cursor"] - 1) % 3
+            elif ev["right"]:
+                d["cursor"] = (d["cursor"] + 1) % 3
             elif ev["tap"]:
                 d["face"] = d["cursor"]
-                idx = d["perm"][d["cursor"]]
-                if d["round"] == 1: self.career = idx
+                back = d["cursor"]
+                idx = d["perm"][back]
+                if d["round"] == 1:
+                    self.career = idx
+                self.card_backs.append(back)
                 self.grant(CARD_ITEMS[d["round"]][idx])
+            elif ev["back"] and d["round"] == 3:
+                d["active"] = False
+                self.r_done[3] = True
+                self.say("Skipped optional 4th card.")
         elif ev["tap"]:
             d["active"] = False
             self.r_done[d["round"]] = True
@@ -822,7 +883,7 @@ class Game:
         if item == "HINT_HARD": self.hh = cap(self.hh)
         elif item == "HINT_SMART": self.hs = cap(self.hs)
         elif item == "UNDO": self.undo = cap(self.undo)
-        elif item == "FREEZE": self.freeze = cap(self.freeze)
+        elif item == "FREEZE": self.freeze_t = 10.0
         elif item == "ARMOR": self.armor = cap(self.armor)
         elif item == "BOOST": self.boost = True
         elif item == "SLOW": self.slow_t = 10.0
@@ -831,12 +892,21 @@ class Game:
             if self.shard >= 2:
                 self.shard = 0
                 self.armor = cap(self.armor)
+        elif item == "HEART_LOSS":
+            if self.armor > 0:
+                self.armor -= 1
+                self.say("ARMOR PROTECTED!")
+            else:
+                self.hearts = max(0, self.hearts - 1)
+                self.say("Heart Loss card! -1 heart")
+                if self.hearts <= 0:
+                    self.state, self.over_until = "over", time.time() + 3.0
 
     # ---------------- part hunt ----------------
     def pickup(self, sp):
         self.done_spots.add(sp.id)
         self.found[sp.part] += 1
-        self.zoom = {"t": 0.0, "x": sp.ix, "y": sp.iy, "part": sp.part}      # camera zooms to the spot
+        self.zoom = {"t": 0.0, "x": sp.ix, "y": sp.iy, "part": sp.part}
         left = TOTAL_PARTS - self.parts_total()
         self.notes.append("Found %s (%s)" % (PART_SHORT[sp.part], sp.name))
         self.say("Found: %s  (%d/%d)" % (PART_LABEL[sp.part], self.found[sp.part], PART_QTY[sp.part]))
@@ -850,23 +920,23 @@ class Game:
             self.notes.append("Hint: " + h.title)
 
     # ---------------- decoder wiring ----------------
-    def make_pairs(self):                # the 6 characters are shuffled (LFSR) into 3 pairs: QA test 1, 2 and 3
+    def make_pairs(self):
         order = [1, 2, 3, 4, 5, 6]
         for i in range(5, 0, -1):
             j = self.lfsr_pick(i + 1)
             order[i], order[j] = order[j], order[i]
         self.qa_pairs = [(order[0], order[1]), (order[2], order[3]), (order[4], order[5])]
 
-    def new_round(self):                 # the next QA test checks the next 2 characters; the circuit stays
+    def new_round(self):
         if self.qa_pairs is None: self.make_pairs()
         self.codes = list(self.qa_pairs[min(self.rnd, ROUNDS - 1)])
         self.undo_rec = None
 
-    def on_of(self, k):                  # segments your circuit lights for input code k
+    def on_of(self, k):
         c, b, a = bits(k)
         return "".join(s for s in SEGS if seg_val(self.w, s, c, b, a))
 
-    def seg_ok(self, s):                 # segment s matches the target on both test inputs
+    def seg_ok(self, s):
         return all(seg_val(self.w, s, *bits(k)) == int(s in GOLD[k]) for k in self.codes)
 
     def code3(self): return sum(1 << i for i in range(3) if self.sw[i])
@@ -887,7 +957,7 @@ class Game:
         img = load_img(name)
         return pygame.transform.smoothscale(img, (max(1, round(img.get_width() * h / img.get_height())), h)) if img else None
 
-    def find_path(self, start, goal):    # shortest walk on the real floor (same grid as the player)
+    def find_path(self, start, goal):
         near_cell = lambda q: min(self.reach, key=lambda p: (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2)
         s, g = near_cell(start), near_cell(goal)
         prev, todo = {s: None}, deque([s])
@@ -905,7 +975,7 @@ class Game:
             c = prev[c]
         return path[::-1]
 
-    def start_intro(self):               # after the first card: the Boss comes in through the door
+    def start_intro(self):
         self.intro_started, self.cutscene = True, True
         n = self.npc
         n.update(x=622.0, y=186.0, state="to_player", walk=True)
@@ -920,7 +990,7 @@ class Game:
             while budget > 0 and n["path"]:
                 tx, ty = n["path"][0]
                 d = math.hypot(tx - n["x"], ty - n["y"])
-                if d > 0.5:                                                  # facing for the Boss skin
+                if d > 0.5:
                     ddx, ddy = tx - n["x"], ty - n["y"]
                     n["dir"] = ("right" if ddx > 0 else "left") if abs(ddx) >= abs(ddy) else ("front" if ddy > 0 else "back")
                 if d <= budget:
@@ -950,12 +1020,12 @@ class Game:
             else: self.talk_done(True)
         elif ev["back"] and t["ask"] and last:
             self.talk_done(False)
-        elif ev["back"] and TEST_MODE and t["tag"] == "intro":      # test: skip the introduction
+        elif ev["back"] and TEST_MODE and t["tag"] == "intro":
             self.talk_done(True)
 
     def talk_done(self, yes):
         t, self.talk = self.talk, None
-        if t["tag"] == "intro":                      # the Boss walks to the desk and sits down
+        if t["tag"] == "intro":
             n = self.npc
             n["state"] = "to_seat"
             n["path"] = self.find_path((n["x"], n["y"]), (NPC_OBJ.ax, NPC_OBJ.ay)) + [NPC_SEAT]
@@ -981,7 +1051,7 @@ class Game:
                             "QA test %d of %d: I will check the two inputs of the work order.   Space = test it     Esc = not yet"
                             % (self.rnd + 1, ROUNDS)], "ask", ask=True)
 
-    def judge(self):                     # the Boss tests the circuit and tells right or wrong
+    def judge(self):
         res = [(k, set(self.on_of(k)) == set(GOLD[k])) for k in self.codes]
         good = sum(ok for _, ok in res)
         lines = ["Let me test your circuit..."]
@@ -992,14 +1062,10 @@ class Game:
             if self.rnd + 1 >= ROUNDS:
                 lines.append("All %d tests passed! The decoder is verified. You may leave through the exit door." % ROUNDS)
             else:
-                lines.append("Test %d of %d passed! That covered %s and %s. I still have to check the other characters: "
-                             "%d more test%s. If your circuit is right you do not need to change anything, just come back and ask me again."
-                             % (self.rnd + 1, ROUNDS, CHAR_NAME[self.codes[0]], CHAR_NAME[self.codes[1]],
-                                ROUNDS - self.rnd - 1, "" if ROUNDS - self.rnd - 1 == 1 else "s"))
+                lines.append("Test %d of %d passed!" % (self.rnd + 1, ROUNDS))
             self.open_talk(lines, "verdict", result="pass")
         else:
-            lines.append("Not right. Go back to the bench and fix it. " +
-                         ("Your armor takes the hit this time." if self.armor > 0 else "That costs you a heart."))
+            lines.append("Not right. Go back to the bench and fix it.")
             self.open_talk(lines, "verdict", result="fail")
 
     def damage(self):
@@ -1018,11 +1084,6 @@ class Game:
         for s in SEGS:
             if self.seg_ok(s):
                 continue
-            t = [int(s in GOLD[k]) for k in self.codes]
-            ins = ["%d%d%d" % bits(k) for k in self.codes]
-            if not exact:
-                return "Segment %s must be %s for input %s and %s for input %s." % (
-                    s, "ON" if t[0] else "OFF", ins[0], "ON" if t[1] else "OFF", ins[1])
             for sink, src in REF:
                 if self.w.get(sink) != src:
                     return "Try this next: wire the %s to the %s." % (sink_name(sink), src_name(src))
@@ -1043,30 +1104,23 @@ class Game:
     def use_item(self, name):
         if name == "HINT_HARD":
             if self.hh == 0: return self.say("You do not have this item.")
-            if self.rnd >= ROUNDS: return self.say("Not useful now: the decoder is already verified.")
-            if self.codes is None: return self.say("Not useful yet: power on the decoder bench first.")
             self.hh -= 1; self.show_hint(self.wiring_hint(False))
         elif name == "HINT_SMART":
             if self.hs == 0: return self.say("You do not have this item.")
             h = self.smart_hint()
-            if h is None: return self.say("Not useful now: nothing left to hint.")
+            if h is None: return self.say("Nothing left to hint.")
             self.hs -= 1; self.show_hint(h)
-        elif name == "UNDO":
-            if self.undo == 0: return self.say("You do not have this item.")
-            if self.undo_rec is None or self.rnd >= ROUNDS: return self.say("Nothing to undo right now.")
-            self.undo -= 1
-            self.w, self.undo_rec, self.wsrc, self.msel = self.undo_rec, None, None, None
-            self.say("Your last wiring change was undone.")
         elif name == "FREEZE":
             if self.freeze == 0: return self.say("You do not have this item.")
-            self.say("No moving obstacles here. Keep it for Stage 3.")
+            self.freeze -= 1
+            self.freeze_t = 10.0
+            self.say("Frozen for 10 seconds!")
 
     def inventory_input(self, ev):
         if ev["left"]: self.inv_cur = (self.inv_cur - 1) % 4
         elif ev["right"]: self.inv_cur = (self.inv_cur + 1) % 4
         elif ev["tap"]: self.use_item(USABLE[self.inv_cur])
 
-    # ---------------- update ----------------
     def update(self, dt, ev):
         self._walking = False
         self._update(dt, ev)
@@ -1087,7 +1141,7 @@ class Game:
             if time.time() > self.over_until: self.reset_stage()
             return
         self.slow_t = max(0.0, self.slow_t - dt)
-        self.skill_t = max(0.0, self.skill_t - dt)                  # the skill keeps counting, even during a dialogue
+        self.skill_t = max(0.0, self.skill_t - dt)
         if self.zoom:
             self.zoom["t"] += dt
             if self.zoom["t"] >= ZOOM_SECS: self.zoom = None
@@ -1099,8 +1153,9 @@ class Game:
         self.npc_update(dt)
         if self.talk: self.talk_input(ev); return
         if self.cutscene: return
-        self.play_t += dt                                           # play time since the Boss sat down
-        if self.zoom:                                               # camera zoom on the part you just found (Space skips it)
+        self.play_t += dt
+        self.freeze_t = max(0.0, self.freeze_t - dt)
+        if self.zoom:
             if ev["tap"] and self.zoom["t"] > 0.8: self.zoom = None
             return
         if press: self.try_skill()
@@ -1112,8 +1167,7 @@ class Game:
         if self.mode == "map": self.map_update(dt, ev)
         else: self.closeup_input(ev)
 
-    # ---------------- workshop-shirt skill: see the hidden parts for 10 s ----------------
-    def look(self):                      # skin drawn: the workshop shirt (form 1) all the time; gown (form 2) after clearing
+    def look(self):
         return self.form
 
     def skill_ready(self):
@@ -1125,17 +1179,17 @@ class Game:
     def try_skill(self):
         if self.skill_t > 0: return self.say("The skill is already on!")
         if self.skill_used: return self.say("You already used the skill again.")
-        if self.play_t < SKILL_WAIT: return self.say("Skill recharging: %d s left" % math.ceil(SKILL_WAIT - self.play_t))
-        if self.mode != "map": return self.say("Use the skill while walking around the office.")
         self.skill_used = True
         self.start_skill()
-        self.say("WORKSHOP SHIRT: hidden parts revealed for %d s!" % SKILL_SECS)
+        self.say("WORKSHOP SHIRT: hidden parts revealed!")
 
     def speed(self):
+        if self.freeze_t > 0:
+            return 0.0
         s = BASE_SPEED * 1.2
         return s * 0.5 if self.slow_t > 0 else s
 
-    def blocked(self, x, y):             # true if any sample point of the feet box is on a solid or off the floor
+    def blocked(self, x, y):
         x, y = int(x), int(y)
         l, r, t, b = x - FEET_HW, x + FEET_HW, y - FEET_H, y
         for px, py in ((l, t), (r, t), (l, b), (r, b), (x, t), (x, b), (l, (t + b) // 2), (r, (t + b) // 2)):
@@ -1143,7 +1197,7 @@ class Game:
                 return True
         return False
 
-    def flood(self, start):             # every floor point the player can really walk to
+    def flood(self, start):
         s = (int(start[0]), int(start[1]))
         seen, todo = {s}, [s]
         while todo:
@@ -1155,11 +1209,11 @@ class Game:
                     todo.append(n)
         return seen
 
-    def set_anchor(self, o):            # the walkable point nearest to the thing's base = where you stand to use it
+    def set_anchor(self, o):
         fx, fy = o.foot
         o.ax, o.ay = min(self.reach, key=lambda p: (p[0] - fx) ** 2 + (p[1] - fy) ** 2)
 
-    def find_near(self):                 # nearest thing the player can use: ("obj"|"item"|"hint", thing)
+    def find_near(self):
         best, bs = None, 1.0001
         cands = [("obj", o) for o in OBJS] + ([("npc", NPC_OBJ)] if self.npc["state"] == "sit" else []) + \
                 [("item", sp) for sp in ITEM_SPOTS if sp.id not in self.done_spots] + \
@@ -1170,26 +1224,29 @@ class Game:
                 best, bs = (kind, o), score
         return best
 
+    def move_axis(self, dx, dy, sp):     # walk one axis; if a corner / desk edge is in the way, glide sideways toward the nearest gap (up to 20 px)
+        nx, ny = self.px + dx * sp, self.py + dy * sp
+        if not self.blocked(nx, ny):
+            self.px, self.py = nx, ny
+            return
+        for off in (4, 8, 12, 16, 20):
+            for sg in (1, -1):
+                gx, gy = (0, sg) if dx else (sg, 0)                       # sideways = the other axis
+                if self.blocked(nx + gx * off, ny + gy * off): continue
+                step = min(off, max(1.0, sp))                             # slide sideways at walking speed, then keep going straight
+                sx, sy = self.px + gx * step, self.py + gy * step
+                if not self.blocked(sx, sy):
+                    self.px, self.py = sx, sy
+                    return
+
     def map_update(self, dt, ev):
         k = pygame.key.get_pressed()
         dx = int(k[pygame.K_RIGHT] or k[pygame.K_d]) - int(k[pygame.K_LEFT] or k[pygame.K_a])
         dy = int(k[pygame.K_DOWN] or k[pygame.K_s]) - int(k[pygame.K_UP] or k[pygame.K_w])
         sp = self.speed() * dt
         ox, oy = self.px, self.py
-        if dx:
-            if not self.blocked(self.px + dx * sp, self.py): self.px += dx * sp
-            else:                                    # slide along a slanted wall instead of getting stuck
-                for n in (sp * 0.7, -sp * 0.7):
-                    if not self.blocked(self.px + dx * sp, self.py + n):
-                        self.px += dx * sp; self.py += n
-                        break
-        if dy:
-            if not self.blocked(self.px, self.py + dy * sp): self.py += dy * sp
-            else:
-                for n in (sp * 0.7, -sp * 0.7):
-                    if not self.blocked(self.px + n, self.py + dy * sp):
-                        self.px += n; self.py += dy * sp
-                        break
+        if dx: self.move_axis(dx, 0, sp)
+        if dy: self.move_axis(0, dy, sp)
         if self.spr:
             self.spr.update(dt, dx, dy, (self.px, self.py) != (ox, oy))
             self._walking = True
@@ -1209,7 +1266,7 @@ class Game:
     def closeup_input(self, ev):
         o = self.cur
         if ev["back"]:
-            if self.wsrc is not None:                # cancel the source picker, put the old wire back
+            if self.wsrc is not None:
                 self.set_wire(SINKS[self.wcur], self.wprev)
                 self.wsrc = None
             elif self.msel is not None:
@@ -1250,7 +1307,7 @@ class Game:
                     self.rec_undo()
                     del self.w[sink]
             return
-        if self.wsrc is not None:                    # source picker: U/D changes the wire live
+        if self.wsrc is not None:
             sink = SINKS[self.wcur]
             opts = [None] + SRC_LIST
             if ev["up"] or ev["down"]:
@@ -1259,36 +1316,46 @@ class Game:
             elif ev["tap"]:
                 self.wsrc = None
             return
-        if ev["left"] or ev["right"] or ev["up"] or ev["down"]:   # the cursor moves to the nearest pin in the pressed direction
+        if ev["left"] or ev["right"] or ev["up"] or ev["down"]:
             self.wcur = self.cursor_step(self.wcur, (ev["right"] - ev["left"], ev["down"] - ev["up"]))
         elif ev["tap"]:
-            self.msel = None
             if self.wcur == CUR_CLEAR:
+                self.msel = self.psel = None
                 self.rec_undo()
                 self.w = {}
+            elif self.wcur >= len(SINKS):            # cursor on a colored output / +5V / GND: pick it (then move to a white pin and press BTNC)
+                self.pick_source(CUR_SRC[self.wcur - len(SINKS)][0])
+            elif self.msel is not None:              # a source is already picked: wire it to this pin
+                self.rec_undo()
+                self.w[SINKS[self.wcur]] = self.msel
+                self.msel = self.psel = None
+                self.cmsg = ""
             else:
+                self.psel = None
                 sink = SINKS[self.wcur]
                 self.rec_undo()
                 self.wprev = self.w.get(sink)
                 self.wsrc = ([None] + SRC_LIST).index(self.wprev)
                 self.cmsg = ""
 
-    def cur_pos(self, i):                # screen position of cursor slot i (a pin, or the CLEAR ALL button)
-        return BTN_CLEAR.center if i == CUR_CLEAR else SINK_POS[SINKS[i]]
+    def cur_pos(self, i):
+        if i == CUR_CLEAR: return BTN_CLEAR.center
+        if i >= len(SINKS): return CUR_SRC[i - len(SINKS)][1]
+        return SINK_POS[SINKS[i]]
 
-    def cursor_step(self, cur, d):       # d = (dx, dy) of the pressed arrow; pick the closest pin lying that way (same row/column preferred)
+    def cursor_step(self, cur, d):
         x0, y0 = self.cur_pos(cur)
         best, bs = cur, None
         for i in range(N_CUR):
             if i == cur: continue
             x, y = self.cur_pos(i)
-            ax, ay = (x - x0) * d[0] + (y - y0) * d[1], abs((x - x0) * d[1]) + abs((y - y0) * d[0])   # along / across the pressed direction
+            ax, ay = (x - x0) * d[0] + (y - y0) * d[1], abs((x - x0) * d[1]) + abs((y - y0) * d[0])
             if ax < 4: continue
             sc = ax + 3 * ay
             if bs is None or sc < bs: best, bs = i, sc
         return best
 
-    def bench_click(self, pos):          # mouse (PC demo only): click a source, then click a pin
+    def bench_click(self, pos):
         if self.wsrc is not None:
             self.wsrc = None
         if TEST_MODE and BTN_AUTO.collidepoint(pos):
@@ -1298,28 +1365,43 @@ class Game:
             self.w = {}
             self.wcur, self.msel = CUR_CLEAR, None
             return
-        for src, pts in SRC_POS.items():
-            if any(near(pos, p, 12) for p in pts):
-                self.msel = None if self.msel == src else src
-                self.cmsg = ""
-                return
-        for i, sink in enumerate(SINKS):
-            if near(pos, SINK_POS[sink], 12):
+        for i, sg in enumerate(SEGS):                # click anywhere on a 220 ohm resistor: the left half = its input pin, the right half = its output pin
+            if pygame.Rect(596, 150 + i * 48 - 14, 140, 28).collidepoint(pos):
+                pos = SINK_POS["s" + sg] if pos[0] < 666 else SRC_POS["R" + sg][0]
+                break
+        for i, n in enumerate("CBA"):                # click a 10k pull-down resistor: its lower end is the pin that goes to GND
+            if pygame.Rect(46 + i * 36 - 13, 330, 26, 82).collidepoint(pos):
+                pos = SINK_POS["pd." + n]
+                break
+        R = 15
+        for src, pts in SRC_POS.items():             # a colored output / +5V / GND (rail dot, rail line or supply terminal)
+            if any(near(pos, p, R) for p in pts): return self.pick_source(src)
+        for i, sink in enumerate(SINKS):             # a white pin
+            if near(pos, SINK_POS[sink], R):
                 self.wcur = i
-                if self.msel is None:
-                    if sink in self.w:
-                        self.rec_undo()
-                        del self.w[sink]
-                else:
+                if self.msel is not None:            # source first, then the pin
                     self.rec_undo()
                     self.w[sink] = self.msel
-                    self.msel, self.cmsg = None, ""
+                    self.msel, self.psel, self.cmsg = None, None, ""
+                elif sink in self.w:                 # a wired pin: click = remove the wire
+                    self.rec_undo()
+                    del self.w[sink]
+                    self.psel = None
+                else:                                # pin first, then its source
+                    self.psel = None if self.psel == sink else sink
+                    self.cmsg = ""
                 return
         for kind, y in RAIL_LINES:                   # +5V / GND: click anywhere along the rail
-            if 184 <= pos[0] <= 560 and abs(pos[1] - y) <= 8:
-                self.msel = None if self.msel == kind else kind
-                self.cmsg = ""
-                return
+            if 170 <= pos[0] <= 575 and abs(pos[1] - y) <= 10: return self.pick_source(kind)
+
+    def pick_source(self, src):                      # a source was clicked: connect it to the picked pin, or select it for the next pin
+        if self.psel is not None:
+            self.rec_undo()
+            self.w[self.psel] = src
+            self.psel = self.msel = None
+        else:
+            self.msel = None if self.msel == src else src
+        self.cmsg = ""
 
     # ---------------- drawing helpers ----------------
     def txt(self, s, text, x, y, font=None, color=(255, 255, 255)):
@@ -1366,7 +1448,7 @@ class Game:
                 pygame.draw.rect(ui, (90, 120, 160), o.rect, 2)
                 ui.blit(self.f_tiny.render(o.name, True, (255, 255, 255)), (o.rect.x + 2, o.rect.y + 2))
             self.txt(ui, "Background image not found. Put bg.jpg in:  " + ASSET_DIRS[0], 12, UH - 24, self.f_s, (255, 200, 120))
-        if self.skill_t > 0:                                         # skill: the hidden parts glow
+        if self.skill_t > 0:
             pulse = math.sin(time.time() * 7)
             for sp in ITEM_SPOTS:
                 if sp.id in self.done_spots: continue
@@ -1383,7 +1465,7 @@ class Game:
         f = None if (self.talk or self.cutscene) else self.find_near()
         if f:
             kind, o = f
-            if kind in ("obj", "npc"):                       # hidden parts and hints show no prompt
+            if kind in ("obj", "npc"):
                 self.ctxt(ui, "[Space] " + o.name, int(self.px), int(self.py - SPR_H - 16), self.f_s, (255, 230, 120))
         if self.debug:
             pygame.draw.rect(ui, (0, 255, 255), FLOOR, 2)
@@ -1403,7 +1485,7 @@ class Game:
                 pygame.draw.rect(ui, (255, 255, 0), o.rect, 1)
                 pygame.draw.circle(ui, (255, 255, 0), (o.ax, o.ay), 4)
 
-    def hide_legs(self, ui):             # behind a partition: the room picture covers the body below the partition's top edge
+    def hide_legs(self, ui):
         if not self.bg: return
         for x0, x1, ye, cut in ROW_LANES:
             if x0 - 12 <= self.px <= x1 + 12 and ye - LANE_H <= self.py <= ye + 1:
@@ -1422,7 +1504,7 @@ class Game:
             pygame.draw.rect(ui, FORM_COLORS[form], (sx, sy + SPR_H // 3, SPR_W, SPR_H - SPR_H // 3), border_radius=6)
             pygame.draw.circle(ui, (240, 200, 160), (sx + SPR_W // 2, sy + SPR_H // 6), max(6, SPR_W // 3))
 
-    def draw_npc(self, ui):              # skin: assets/Boss*.png (BossSprite), else npc_stand.png / npc_sit.png, else a drawn figure
+    def draw_npc(self, ui):
         n = self.npc
         x, y = int(n["x"]), int(n["y"])
         sit = n["state"] == "sit"
@@ -1443,7 +1525,7 @@ class Game:
             pygame.draw.circle(ui, (240, 200, 160), (x, y - 50 + bob), 8)
             pygame.draw.rect(ui, (60, 40, 30), (x - 8, y - 58 + bob, 16, 6), border_radius=3)
 
-    def draw_talk(self, ui):             # dialogue box at the bottom of the game area
+    def draw_talk(self, ui):
         t = self.talk
         last = t["i"] >= len(t["lines"]) - 1
         pygame.draw.rect(ui, (14, 18, 28), (40, 400, 880, 120), border_radius=10)
@@ -1474,7 +1556,7 @@ class Game:
         self.txt(s, foot or "", 16, 499, self.f_s, (170, 200, 255))
         self.txt(s, "Back: hold Space (BTNC) or press Esc", 16, 520, self.f_tiny, (140, 150, 180))
 
-    def draw_target(self, s, k, x, y):               # one line of the work order: the input and the character it must show
+    def draw_target(self, s, k, x, y):
         pygame.draw.rect(s, (27, 41, 64), (x, y, 254, 66), border_radius=6)
         pygame.draw.rect(s, (45, 64, 94), (x, y, 254, 66), 2, border_radius=6)
         draw_set(s, GOLD[k], x + 12, y + 9, 28, 48, (38, 54, 76))
@@ -1489,10 +1571,10 @@ class Game:
         if self.page == 0:
             lines = ["WORK ORDER #402", "Build the 7-segment decoder.",
                      "1. Hunt for all 18 lab parts in the office.", "   (notes and screens hold hints)",
-                     "2. Bring them to the decoder bench.", "3. Wire it, then show it to the Boss.", "",
+                     "2. Bring them to the decoder bench", "   to the bottom right.", "3. Wire it, then show it to the Boss.", "",
                      "input CBA -> character", "001 = C   010 = P   011 = E", "100 = -   101 = 3   110 = 9",
                      "(000 and 111 never occur)"]
-            for i, l in enumerate(lines): self.txt(s, l, 62, 68 + i * 33, self.f_mono, ink)
+            for i, l in enumerate(lines): self.txt(s, l, 62, 66 + i * 30, self.f_mono, ink)
             return "BTNC: next page"
         if self.page == 1:
             self.txt(s, "EQUIPMENT LIST", 62, 68, self.f_mono_l, ink)
@@ -1511,7 +1593,7 @@ class Game:
             for i, k in enumerate(self.codes):
                 self.txt(s, "input CBA = %d%d%d  ->  show %s" % (bits(k) + (CHAR_NAME[k],)), 70, 140 + i * 130, self.f_mono, ink)
                 draw_set(s, GOLD[k], 470, 126 + i * 130, 54, 92, (215, 215, 210))
-        if self.qa_pairs:                                # progress: which characters the Boss has already checked
+        if self.qa_pairs:
             for i, pair in enumerate(self.qa_pairs):
                 if i < self.rnd: txt, col = "Test %d: %s and %s - passed" % (i + 1, CHAR_NAME[pair[0]], CHAR_NAME[pair[1]]), (20, 120, 40)
                 else: txt, col = "Test %d: not done yet" % (i + 1), (90, 90, 100)
@@ -1528,7 +1610,7 @@ class Game:
             self.ctxt(s, "The lock is wired to the decoder bench.", 320, 394, self.f_s, (200, 200, 210))
         return "BTNC: leave the lab" if done else "BTNC: try the handle"
 
-    def cu_bench(self, s):                           # page 0: parts tray checklist
+    def cu_bench(self, s):
         pygame.draw.rect(s, (10, 20, 10), (40, 56, 560, 366), border_radius=6)
         g = (110, 255, 130)
         self.txt(s, "DECODER BENCH - PARTS TRAY", 56, 64, self.f_mono, g)
@@ -1546,8 +1628,8 @@ class Game:
         return "BTNC: power on / open the breadboard"
 
     # ---------------- drawing: the breadboard ----------------
-    def draw_resistor(self, ui, x, y, bands):        # horizontal resistor, centre at (x, y)
-        pygame.draw.line(ui, (170, 170, 175), (x - 36, y), (x + 36, y), 3)
+    def draw_resistor(self, ui, x, y, bands, lead=36):   # horizontal resistor, centre at (x, y); the leads reach the two pins
+        pygame.draw.line(ui, (170, 170, 175), (x - lead, y), (x + lead, y), 3)
         pygame.draw.rect(ui, (214, 180, 120), (x - 20, y - 7, 40, 14), border_radius=6)
         for i, col in enumerate(bands):
             pygame.draw.rect(ui, col, (x - 13 + i * 9, y - 7, 4, 14))
@@ -1585,7 +1667,6 @@ class Game:
         pygame.draw.rect(ui, (34, 40, 54), (0, 0, UW, 44))
         self.txt(ui, "DECODER BENCH", 120, 8, self.f_l)
         self.rtxt(ui, "Wires %d / %d   |   Parts %d/%d" % (len(w), len(REF), self.parts_total(), TOTAL_PARTS), UW - 16, 14, self.f_s, muted)
-        # QA header
         for i, k in enumerate(self.codes):
             self.draw_target(ui, k, 16 + i * 262, 48)
         pygame.draw.rect(ui, (17, 26, 43), (548, 48, 84, 66), border_radius=6)
@@ -1598,7 +1679,6 @@ class Game:
         if TEST_MODE:
             pygame.draw.rect(ui, (214, 120, 40), BTN_AUTO, border_radius=5)
             self.ctxt(ui, "AUTO-WIRE (test)", BTN_AUTO.centerx, BTN_AUTO.y + 9, self.f_s, (20, 20, 20))
-        # breadboard + rails
         ui.blit(self.bb_surf, (16, 116))
         pygame.draw.rect(ui, (120, 110, 90), (16, 116, 928, 384), 3)
         for kind, y in RAIL_LINES:
@@ -1606,15 +1686,13 @@ class Game:
             pygame.draw.line(ui, (210, 60, 60) if red else (60, 90, 220), (184, y), (560, y), 4)
             self.txt(ui, "+5V" if red else "GND", 187, y + 4, self.f_tiny, (190, 40, 40) if red else (50, 70, 190))
         for u in IC_X: self.draw_ic(ui, u)
-        # bench supply
         pygame.draw.rect(ui, (70, 74, 84), (24, 124, 140, 74), border_radius=6)
         self.txt(ui, "BENCH DC SUPPLY", 32, 128, self.f_tiny, (225, 228, 235))
         pygame.draw.rect(ui, (10, 30, 14), (34, 144, 80, 26), border_radius=3)
         self.txt(ui, "5.00 V", 44, 148, self.f_m, (90, 255, 110))
         pygame.draw.circle(ui, (210, 50, 50), (130, 160), 6)
         pygame.draw.circle(ui, (30, 30, 36), (150, 160), 6)
-        self.txt(ui, "click the +5V / GND rails", 32, 180, self.f_tiny, (205, 208, 220))
-        # DIP switch (= board switches SW2..SW0) with pull-down resistors
+        self.txt(ui, "red = +5V, blue = GND (or the rails)", 32, 180, self.f_tiny, (205, 208, 220))
         pygame.draw.rect(ui, (36, 84, 190), (28, 212, 120, 112), border_radius=4)
         self.txt(ui, "DIP SWITCH", 36, 214, self.f_tiny, (225, 235, 255))
         for i, (n, swi) in enumerate((("C", 2), ("B", 1), ("A", 0))):
@@ -1626,7 +1704,7 @@ class Game:
             self.txt(ui, "SW%d" % swi, 124, y - 5, self.f_tiny, (200, 215, 255))
             pygame.draw.line(ui, (150, 150, 158), (148, y), (160, y), 3)
         self.txt(ui, "+5V", 164, 207, self.f_tiny, (190, 40, 40))
-        for i, n in enumerate("CBA"):                # three 10k pull-down resistors (top end is soldered to the switch output)
+        for i, n in enumerate("CBA"):
             x = 46 + i * 36
             pygame.draw.line(ui, (170, 170, 175), (x, 326), (x, 392), 3)
             pygame.draw.rect(ui, (214, 180, 120), (x - 7, 340, 14, 38), border_radius=6)
@@ -1634,22 +1712,23 @@ class Game:
                 pygame.draw.rect(ui, col, (x - 7, 345 + j * 9, 14, 4))
             self.txt(ui, n, x - 3, 400, self.f_tiny, (60, 60, 55))
         self.txt(ui, "10k pull-downs: lower end to GND", 30, 418, self.f_tiny, (95, 95, 85))
-        # 7-segment display with 220 ohm resistors
         for i, s in enumerate(SEGS):
             y = 150 + i * 48
-            self.draw_resistor(ui, 668, y, [(200, 40, 40), (200, 40, 40), (150, 90, 40)])
+            self.draw_resistor(ui, 666, y, [(200, 40, 40), (200, 40, 40), (150, 90, 40)], lead=56)    # leads end exactly on the white pin (610) and the output pin (722)
             self.txt(ui, "220", 656, y - 21, self.f_tiny, (95, 95, 85))
         pygame.draw.rect(ui, (12, 12, 16), (770, 128, 160, 230), border_radius=8)
         draw_set(ui, self.on_of(self.code3()), 800, 150, 100, 180, (40, 22, 24))
         for i, s in enumerate(SEGS):
             self.txt(ui, s, 774, 136 + i * 32, self.f_tiny, (200, 200, 210))
         self.txt(ui, "COM", 902, 306, self.f_tiny, (60, 60, 55))
-        self.ctxt(ui, "7-SEGMENT (common cathode)", 850, 336, self.f_tiny, (180, 180, 195))
+        for ch, (lx, ly) in {"A": (850, 133), "B": (910, 196), "C": (910, 270), "D": (850, 331),      # segment names like the datasheet picture
+                             "E": (790, 270), "F": (790, 196), "G": (850, 211)}.items():
+            self.ctxt(ui, ch, lx, ly, self.f_m, (255, 230, 120))
+        self.ctxt(ui, "7-SEGMENT (common cathode)", 850, 346, self.f_tiny, (180, 180, 195))
         k = self.code3()
         pygame.draw.rect(ui, (17, 26, 43), (770, 366, 160, 56), border_radius=6)
         self.ctxt(ui, "INPUT CBA = %d%d%d" % (c, b, a), 850, 374, self.f_s)
         self.ctxt(ui, ("should show %s" % CHAR_NAME[k]) if k in CHAR_NAME else "(never occurs)", 850, 396, self.f_tiny, muted)
-        # power status lights (like the LEDs of a real bench)
         pygame.draw.rect(ui, (17, 26, 43), (770, 430, 160, 62), border_radius=6)
         self.txt(ui, "POWER", 778, 434, self.f_tiny, muted)
         for i, u in enumerate(UNITS):
@@ -1658,7 +1737,6 @@ class Game:
         pd_n = sum(w.get(k) == "0" for k in ("pd.C", "pd.B", "pd.A"))
         self.txt(ui, "DIP %s  PD %d/3  COM %s" % ("ok" if w.get("dip.vcc") == "1" else "--", pd_n, "ok" if w.get("seg.com") == "0" else "--"),
                  778, 478, self.f_tiny, muted)
-        # wires
         cache = {}
         ce, be, ae = levels(w, c, b, a)
         for sink, src in w.items():
@@ -1671,7 +1749,6 @@ class Game:
             pygame.draw.lines(ui, col, False, wire_pts(p0, SINK_POS[sink]), 3)
             pygame.draw.circle(ui, col, (int(p0[0]), int(p0[1])), 5)
             pygame.draw.circle(ui, col, (int(SINK_POS[sink][0]), int(SINK_POS[sink][1])), 5)
-        # nodes
         for src, pts in SRC_POS.items():
             for p in pts:
                 pygame.draw.circle(ui, src_color(src), p, 7)
@@ -1684,31 +1761,35 @@ class Game:
         for lbl, p in (("C", (160, 238)), ("B", (160, 270)), ("A", (160, 302))):
             self.txt(ui, lbl, p[0] + 10, p[1] - 8, self.f_s, (40, 40, 40))
         if not done:
-            if self.wcur < len(SINKS):                   # cursor: dark-orange ring with a black outline so it shows on every pin
-                cp = SINK_POS[SINKS[self.wcur]]
+            if self.wcur != CUR_CLEAR:
+                cp = self.cur_pos(self.wcur)
                 pygame.draw.circle(ui, (0, 0, 0), cp, 15, 7)
                 pygame.draw.circle(ui, (220, 80, 0), cp, 15, 4)
             if self.wsrc is not None and w.get(SINKS[self.wcur]):
                 for p in SRC_POS[w[SINKS[self.wcur]]]: pygame.draw.circle(ui, (255, 230, 120), p, 11, 3)
             if self.msel:
                 for p in SRC_POS[self.msel]: pygame.draw.circle(ui, (56, 189, 248), p, 12, 3)
-        # footer
+            if self.psel:
+                pygame.draw.circle(ui, (56, 189, 248), SINK_POS[self.psel], 13, 4)
         pygame.draw.rect(ui, (34, 40, 54), (0, 502, UW, 38))
         if self.cmsg: line, lc = self.cmsg, (255, 225, 120)
         elif done: line, lc = "Decoder verified. Leave through the exit door.", (150, 255, 170)
         elif self.wsrc is not None: line, lc = "%s  <-  %s" % (sink_name(SINKS[self.wcur]), src_name(w.get(SINKS[self.wcur]))), (255, 230, 120)
+        elif self.psel: line, lc = "Pin selected: %s  ->  now click a colored output, +5V or GND" % sink_name(self.psel), (130, 215, 255)
         elif self.msel: line, lc = "Selected: %s  ->  now click a white pin" % src_name(self.msel), (130, 215, 255)
+        elif self.wcur >= len(SINKS) and self.wcur != CUR_CLEAR: line, lc = "%s  -> press BTNC to pick it, then move to a white pin" % src_name(CUR_SRC[self.wcur - len(SINKS)][0]), muted
         elif self.wcur < len(SINKS): line, lc = "%s  =  %s" % (sink_name(SINKS[self.wcur]), src_name(w.get(SINKS[self.wcur]))), muted
         else: line, lc = "Press BTNC to remove every wire", muted
         self.txt(ui, line, 14, 505, self.f_s, lc)
-        self.txt(ui, "Mouse: colored output -> white pin (click a wired pin = remove) | Keys: L/R pin, BTNC wire, hold BTNC back | SW2-0 = test | Done? Esc, then ask the Boss",
+        self.txt(ui, "Mouse: colored output -> white pin (click a wired pin = remove) | Keys: arrows move to ANY dot/pin, BTNC pick/wire, hold BTNC back | SW2-0 = test | Done? Esc, then ask the Boss",
                  14, 524, self.f_tiny, (140, 150, 180))
 
     # ---------------- drawing: overlays ----------------
     def draw_cards(self, ui, s):
         d = self.deck
         ov = pygame.Surface((UW, UH), pygame.SRCALPHA); ov.fill((0, 0, 0, 205)); ui.blit(ov, (0, 0))
-        self.ctxt(s, "PICK A CARD  (ROUND %d)" % d["round"], 320, 30, self.f_l)
+        # แก้หัวข้อการ์ดให้แสดงแค่ "PICK A CARD" อย่างเดียวตามที่ต้องการ
+        self.ctxt(s, "PICK A CARD", 320, 30, self.f_l)
 
         for pos in range(3):
             r = pygame.Rect(65 + pos * 180, 95, 170, 170)
@@ -1717,25 +1798,19 @@ class Game:
             item_name = ITEM_TEXT[item][0]
             revealed = (d["face"] == pos)
 
-            if d["round"] == 1:
-                fb_col = CAREERS[idx][1] if revealed else (80, 85, 100)
+            if self.career is not None:
+                fb_col = CAREERS[self.career][1]
             else:
-                fb_col = CAREERS[self.career][1] if self.career is not None else (80, 85, 100)
+                fb_col = (80, 85, 100)
 
-            img = None
+            drew_img = False
             if self.card_art:
-                if not CARD_BACKS:                              # faces only (same look in all 3 rounds); the picked card gets a gold frame
-                    img = self.card_art.get_image(d["round"], self.career, pos, True, slot_idx=idx)
-                elif d["round"] == 1 or revealed:               # backs on: face-down first, the picked card flips to its face
-                    img = self.card_art.get_image(d["round"], self.career, pos, revealed, slot_idx=idx)
-                elif self.career is not None:
-                    img = self.card_art.get_r1_back(self.career)
-            if img:                                             # picture from assets/ (card_assets.py): keep its own proportions
-                k = min(1.0, CARD_BOX[0] / img.get_width(), CARD_BOX[1] / img.get_height())
-                if k < 1.0: img = pygame.transform.smoothscale(img, (max(1, round(img.get_width() * k)), max(1, round(img.get_height() * k))))
-                r = img.get_rect(center=(r.centerx, CARD_CY))
-                s.blit(img, r.topleft)
-            else:                                               # no picture found: plain card with text
+                drew_img, drawn_r = self.card_art.draw_card(
+                    s, r, d["round"], self.career if self.career is not None else 0, pos, revealed,
+                    slot_idx=idx, fallback_color=fb_col, item_name=item
+                )
+
+            if not drew_img:
                 pygame.draw.rect(s, fb_col, r, border_radius=10)
                 if d["round"] == 1:
                     if revealed:
@@ -1744,11 +1819,10 @@ class Game:
                     else:
                         self.ctxt(s, "?", r.centerx, r.y + 90, self.f_l, (200, 200, 200))
                 else:
+                    if self.career is not None:
+                        self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
                     if revealed:
-                        if self.career is not None: self.ctxt(s, SYMBOLS[self.career][pos], r.centerx, r.y + 60, self.f_m)
                         self.ctxt(s, item_name, r.centerx, r.y + 120, self.f_s)
-                    else:
-                        self.ctxt(s, "?", r.centerx, r.y + 90, self.f_l, (200, 200, 200))
 
             if d["face"] is None and pos == d["cursor"]:
                 pygame.draw.rect(s, (255, 255, 255), r.inflate(10, 10), 4, border_radius=12)
@@ -1762,7 +1836,8 @@ class Game:
             self.ctxt(s, desc, 320, 356, self.f_s, (240, 240, 240))
             self.ctxt(s, "BTNC: continue", 320, 420, self.f_m, (170, 200, 255))
         else:
-            self.ctxt(s, "L/R choose   BTNC pick", 320, 360, self.f_m, (170, 200, 255))
+            prompt = "L/R choose   BTNC pick   Esc skip" if d["round"] == 3 else "L/R choose   BTNC pick"
+            self.ctxt(s, prompt, 320, 360, self.f_m, (170, 200, 255))
 
     def draw_inventory(self, s):
         self.draw_box(s, pygame.Rect(90, 80, 460, 340))
@@ -1831,6 +1906,8 @@ class Game:
             self.txt(ui, "x%d" % self.armor, 118, 14, self.f_s, (120, 200, 255))
         if self.slow_t > 0:
             self.txt(ui, "SLOW %.0fs" % self.slow_t, 16, 40, self.f_s, (255, 150, 80))
+        if self.freeze_t > 0:
+            self.txt(ui, "FREEZE %.0fs" % self.freeze_t, 290, 14, self.f_m, (140, 220, 255))
         if self.mode == "map" or not (self.cur and self.cur.kind == "bench" and self.page == 1):
             self.rtxt(ui, "Parts %d/%d" % (self.parts_total(), TOTAL_PARTS), UW - 14, 10, self.f_s, (150, 255, 170))
             self.rtxt(ui, "QA %d/%d" % (self.rnd, ROUNDS), UW - 14, 28, self.f_s, (255, 230, 120))
@@ -1860,7 +1937,7 @@ class Game:
         if self.state == "clear": return "PA55"
         if self.state == "over": return "dEAd"
         if self.wiring_live() and not self.deck["active"]:
-            return "%d%d%d " % bits(self.code3())            # last digit is replaced by the live decoder output
+            return "%d%d%d " % bits(self.code3())
         return ""
 
     def draw_panel(self, scr):
@@ -1890,18 +1967,18 @@ class Game:
                  360, y0 + 94, self.f_tiny, (170, 170, 190))
         self.txt(scr, "Form: %s" % FORM_NAMES[self.look()], 14, y0 + 98, self.f_tiny, (140, 140, 160))
 
-    def part_icon(self, key):            # optional picture assets/part_<key>.png (e.g. part_not.png); otherwise a drawn icon
+    def part_icon(self, key):
         if key not in self.cu_cache or ("icon", key) not in self.cu_cache:
             img = load_img("part_%s.png" % key)
             if img: img = pygame.transform.smoothscale(img, (max(1, round(img.get_width() * 96 / img.get_height())), 96))
             self.cu_cache[("icon", key)] = img
         return self.cu_cache[("icon", key)]
 
-    def draw_part_icon(self, ui, key, cx, cy):          # drawn pictures of the 9 kinds of parts, centred at (cx, cy)
+    def draw_part_icon(self, ui, key, cx, cy):
         img = self.part_icon(key)
         if img:
             ui.blit(img, (cx - img.get_width() // 2, cy - img.get_height() // 2)); return
-        if key in ("not", "and", "or"):                 # DIP-14 chip
+        if key in ("not", "and", "or"):
             pygame.draw.rect(ui, (32, 33, 40), (cx - 50, cy - 22, 100, 44), border_radius=4)
             for i in range(7):
                 for yy in (cy - 31, cy + 22):
@@ -1927,20 +2004,20 @@ class Game:
                 for y in range(cy - 30, cy + 32, 9): ui.fill((170, 166, 152), (x, y, 3, 3))
             for col, (a, b) in (((220, 60, 60), (-30, 20)), ((60, 90, 220), (0, 40)), ((70, 190, 90), (28, -10))):
                 pygame.draw.lines(ui, col, False, [(cx + a, cy - 8), (cx + a, cy - 30), (cx + b, cy - 30), (cx + b, cy + 4)], 3)
-        else:                                           # psu
+        else:
             pygame.draw.rect(ui, (70, 74, 84), (cx - 56, cy - 34, 112, 68), border_radius=6)
             pygame.draw.rect(ui, (10, 30, 14), (cx - 44, cy - 24, 64, 24), border_radius=3)
             self.txt(ui, "5.00V", cx - 40, cy - 20, self.f_s, (90, 255, 110))
             pygame.draw.circle(ui, (210, 50, 50), (cx + 34, cy - 12), 7)
             pygame.draw.circle(ui, (30, 30, 36), (cx + 34, cy + 14), 7)
 
-    def draw_found_card(self, ui):       # "FOUND!" card with a picture of the part, shown during the zoom
+    def draw_found_card(self, ui):
         z = self.zoom
         if not z: return
         k = z["t"] / ZOOM_SECS
         if k < 0.18: return
         f = 1.0 + (ZOOM_MAX - 1.0) * min(1.0, max(0.0, k / 0.25 if k < 0.5 else (1.0 - k) / 0.25))
-        sy = (z["y"] - min(max(z["y"] - UH / f / 2, 0), UH - UH / f)) * f         # where the part is on screen now
+        sy = (z["y"] - min(max(z["y"] - UH / f / 2, 0), UH - UH / f)) * f
         w, h = 300, 190
         r = pygame.Rect(UW // 2 - w // 2, 330 if sy < UH * 0.5 else 70, w, h)
         a = int(255 * min(1.0, (k - 0.18) / 0.1, (1.0 - k) / 0.1))
@@ -1956,11 +2033,11 @@ class Game:
         card.set_alpha(a)
         ui.blit(card, r.topleft)
 
-    def apply_zoom(self, ui):            # camera pushes in on the part you just found, then pulls back out
+    def apply_zoom(self, ui):
         z = self.zoom
         if not z: return
         k = z["t"] / ZOOM_SECS
-        e = min(1.0, k / 0.25) if k < 0.5 else min(1.0, (1.0 - k) / 0.25)      # ease in 25%, hold, ease out 25%
+        e = min(1.0, k / 0.25) if k < 0.5 else min(1.0, (1.0 - k) / 0.25)
         e = e * e * (3 - 2 * e)
         f = 1.0 + (ZOOM_MAX - 1.0) * e
         w, h = UW / f, UH / f
