@@ -166,12 +166,12 @@ def modal(frame,g):
             return
         if g.mode=="clear":
             text(d,(320,157),"Wissawa Wattana Building (S4)",20,INK,"mm")
-            text(d,(320,192),"ถึงตึกแดงแล้ว! ด่านต่อไป อาคารเรียนรวม 2",17,INK,"mm")
+            text(d,(320,192),"Next stop: Classroom Building 2",17,INK,"mm")
             title(d,320,225,"NEXT   S4 / CB2","#17475e",1,True)
             return
         if g.mode=="win":
             text(d,(320,157),"Congratulations, graduate!",21,INK,"mm")
-            text(d,(320,192),"ถึง LX (N16) แล้ว! ยินดีด้วยนะ บัณฑิตป้ายแดงคนใหม่!",18,INK,"mm")
+            text(d,(320,192),"You've reached LX for your Graduation Ceremony",18,INK,"mm")
         else:
             text(d,(320,171),"  /  ".join(C.ROUTES[g.stage]),19,INK,"mm")
         title(d,320,225,"ENTER / BTND TO "+("PLAY AGAIN" if g.mode=="win" else "RESUME"),"#17475e",1,True)

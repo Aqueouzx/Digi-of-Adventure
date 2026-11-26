@@ -63,21 +63,21 @@ ATLAS_IMAGES = {}
 ANIMAL_FACING = {"snail": -1, "squirrel": -1, "ant": -1, "goose": -1}
 # Each pair is one line-wrapped interview prompt.
 QUESTIONS = (
-    ("วิ่งไวขนาดนี้", "ตอนไปเรียน 9 โมงเช้าเคยไวเท่านี้ไหมคะ!"),
-    ("ติด F ไว้กี่วิชาคะ", "ถึงต้องสปีดหนีตายขนาดนี้!"),
-    ("วิ่งหนีนักข่าว", "หรือวิ่งหนีเดดไลน์โปรเจกต์คะเนี่ย!"),
-    ("อาจารย์วียืนถือใบปริญญารอตากแดด", "จนตะคริวจะกินแล้วค่ะ!"),
-    ("ถ้าหยุดคุยตรงนี้ 5 วินาที", "ใบปริญญาในมืออาจารย์วีอาจจะบินได้นะคะ!"),
-    ("คิดว่าสปีดพ้นนักข่าว", "แล้วจะผ่านสายตาอันแหลมคมของอาจารย์วีเหรอคะ!"),
-    ("อาจารย์วีฝากถามมาค่ะว่า...", "สรุปโปรเจกต์ผ่านจริงใช่ไหมคะ!"),
-    ("อุตส่าห์เรียนถึกทนมาตั้ง 4 ปี", "จะมาสายวันรับปริญญาไม่ได้นะคะ!"),
-    ("หยุดตอบคำถามก่อนค่ะ!", "จบไปแล้วจะเอาแรงที่ไหนไปตื่นทำงาน!"),
-    ("กล้องช่องเราจับภาพอยู่ค่ะ!", "ยิ้มหวานๆ ให้อาจารย์วีหน่อยค่ะ!"),
-    ("เรียนจบแล้ว จะไปขายก๋วยเตี๋ยว", "หรือทำงานตรงสายคะ ตอบ!"),
-    ("สปีดแรงขนาดนี้", "ตอนกดลงทะเบียนเรียนเคยไวเท่านี้ไหมคะ!"),
-    ("ทรงนี้แก้โค้ดหน้าห้อง", "ใช่ไหมคะสารภาพมาซะดีๆ!"),
-    ("อาจารย์วีนับ 1 ถึง 3 แล้วค่ะ!","ถ้ายังมาไม่ถึงถือว่าเรียนใหม่อีกปีนะคะ!"),
-    ("ลืมบัตรคิวรับใบปริญญาหรือเปล่าคะ", "เห็นวิ่งลนลานขนาดนี้!"),
+    ("Running this fast", "were you ever this quick for a 9 AM lecture?!"),
+    ("How many F's are you hiding", "to be sprinting for your life like this?!"),
+    ("Are you running from reporters", "or running from a project deadline?!"),
+    ("Ajarn Wee has been holding your diploma in the sun", "so long he's about to get a cramp!"),
+    ("If you stop to chat for 5 seconds,", "that diploma in Ajarn Wee's hand might just fly away!"),
+    ("Think you can outrun the press", "and get past Ajarn Wee's sharp eyes?!"),
+    ("Ajarn Wee wanted me to ask...", "did you actually pass your senior project?!"),
+    ("You survived four grueling years", "you can't be late to your own graduation!"),
+    ("Stop and answer our questions!", "Where will you find the energy to wake up for work after this?!"),
+    ("Our cameras are rolling!", "Give a sweet smile for Ajarn Wee!"),
+    ("Now that you're graduating, will you sell noodles", "or actually work in your field?! Answer me!"),
+    ("With speed like that,", "were you ever this fast during course registration?!"),
+    ("Judging by that look, you debugged your code", "right outside the classroom, didn't you?! Confess!"),
+    ("Ajarn Wee is counting to three!", "If you're not there yet, you're repeating another year!"),
+    ("Did you forget your graduation queue card,", "or why else are you sprinting in a panic?!"),
 
 
 )

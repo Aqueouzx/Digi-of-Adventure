@@ -579,7 +579,7 @@ class Game:
             if self.p.box().touches(self.tea.box(1.25,C.TEA_HEIGHT)):
                 self.gold, self.tea = True, None
                 self.tea_growth_until = self.time + 3.0
-                self.notify("ชาไทม์จุติ! พลังซูเปอร์ยาไส้ทลายทุกอุปสรรค!")
+                self.notify("Tea Time Awakening! Superyasai Power: Phase Through Every Obstacle!")
         self.record_route(abs(self.p.x-last_x)>EPS)
         if self.chase or self.cloak_follow>0:
             self.follow_reporter()
@@ -617,7 +617,7 @@ class Game:
         self.contacts = contacts
         if self.progress>=92 and not self.near_finish_seen:
             self.near_finish_seen = True
-            self.notify("อีกนิดเดียวก็ถึงตึกแดงแล้ว สู้ ๆ!" if self.stage==1 else ("อีกนิดเดียวก็ถึงอาคารเรียนรวม 2 แล้ว สู้ ๆ!" if self.stage==2 else "อีกนิดเดียวก็ถึงงานรับปริญญาแล้ว!"))
+            self.notify("Just a little further to Red Building! You've got this!" if self.stage==1 else ("Almost at CB2! Keep pushing!" if self.stage==2 else "Graduation Ceremony is right ahead! Hang in there!"))
         if self.door.x<=self.p.x<=self.door.x+self.door.w and self.p.box().touches(self.door):
             if self.stage < max(self.maps) and (self.stage==1 or self.gold):
                 self.mode = "clear"
