@@ -308,9 +308,10 @@ SRC_LIST = (["1", "0", "C", "B", "A"] + ["N1", "N2", "N3"] + ["A%d" % i for i in
             ["O%d" % i for i in range(1, 9)] + ["R" + s for s in SEGS])
 CUR_SRC = [(k, p) for k, pts in SRC_POS.items() for p in pts]   # every colored output / rail dot / supply terminal is a cursor stop too
 CUR_CLEAR = len(SINKS) + len(CUR_SRC)
-N_CUR = CUR_CLEAR + 1
+CUR_UNDO = CUR_CLEAR + 1
+N_CUR = CUR_UNDO + 1
 BTN_CLEAR = pygame.Rect(790, 58, 154, 34)
-BTN_AUTO = pygame.Rect(636, 58, 146, 34)         # TEST_MODE only
+BTN_UNDO = pygame.Rect(636, 58, 146, 34)         # step back one wiring change (auto-wire is the F8 key, TEST_MODE only)
 
 # one correct build (used by the smart hint item): sink -> source
 REF = ([(u + ".vcc", "1") if k == 0 else (u + ".gnd", "0") for u in UNITS for k in (0, 1)] +
@@ -609,6 +610,7 @@ class Game:
         self.w = {}
         self.wcur, self.wsrc, self.wprev, self.msel, self.psel = 0, None, None, None, None   # psel: a white pin picked first (then click its source)
         self.undo_rec = None
+        self.w_hist = []
         self.notes, self.hints_seen = [], []
         self.hh = self.hs = self.undo = self.freeze = self.armor = self.shard = 0
         self.boost, self.slow_t, self.freeze_t = False, 0.0, 0.0
@@ -931,6 +933,7 @@ class Game:
         if self.qa_pairs is None: self.make_pairs()
         self.codes = list(self.qa_pairs[min(self.rnd, ROUNDS - 1)])
         self.undo_rec = None
+        self.w_hist = []
 
     def on_of(self, k):
         c, b, a = bits(k)
@@ -947,6 +950,18 @@ class Game:
 
     def rec_undo(self):
         self.undo_rec = copy.deepcopy(self.w)
+        self.w_hist.append(copy.deepcopy(self.w))
+        del self.w_hist[:-200]
+
+    def undo_wire(self):                             # UNDO button: go back one wiring change (as many times as you like)
+        while self.w_hist:
+            prev = self.w_hist.pop()
+            if prev != self.w:
+                self.w = prev
+                self.msel = self.psel = self.wsrc = None
+                self.cmsg = ""
+                return
+        self.cmsg = "Nothing to undo."
 
     def set_wire(self, sink, src):
         if src is None: self.w.pop(sink, None)
@@ -1323,6 +1338,8 @@ class Game:
                 self.msel = self.psel = None
                 self.rec_undo()
                 self.w = {}
+            elif self.wcur == CUR_UNDO:
+                self.undo_wire()
             elif self.wcur >= len(SINKS):            # cursor on a colored output / +5V / GND: pick it (then move to a white pin and press BTNC)
                 self.pick_source(CUR_SRC[self.wcur - len(SINKS)][0])
             elif self.msel is not None:              # a source is already picked: wire it to this pin
@@ -1340,6 +1357,7 @@ class Game:
 
     def cur_pos(self, i):
         if i == CUR_CLEAR: return BTN_CLEAR.center
+        if i == CUR_UNDO: return BTN_UNDO.center
         if i >= len(SINKS): return CUR_SRC[i - len(SINKS)][1]
         return SINK_POS[SINKS[i]]
 
@@ -1358,8 +1376,8 @@ class Game:
     def bench_click(self, pos):
         if self.wsrc is not None:
             self.wsrc = None
-        if TEST_MODE and BTN_AUTO.collidepoint(pos):
-            return self.auto_wire()
+        if BTN_UNDO.collidepoint(pos):
+            return self.undo_wire()
         if BTN_CLEAR.collidepoint(pos):
             self.rec_undo()
             self.w = {}
@@ -1571,7 +1589,7 @@ class Game:
         if self.page == 0:
             lines = ["WORK ORDER #402", "Build the 7-segment decoder.",
                      "1. Hunt for all 18 lab parts in the office.", "   (notes and screens hold hints)",
-                     "2. Bring them to the decoder bench", "   to the bottom right.", "3. Wire it, then show it to the Boss.", "",
+                     "2. Bring them to the decoder bench", "   to the middle right.", "3. Wire it, then show it to the Boss.", "",
                      "input CBA -> character", "001 = C   010 = P   011 = E", "100 = -   101 = 3   110 = 9",
                      "(000 and 111 never occur)"]
             for i, l in enumerate(lines): self.txt(s, l, 62, 66 + i * 30, self.f_mono, ink)
@@ -1672,13 +1690,10 @@ class Game:
         pygame.draw.rect(ui, (17, 26, 43), (548, 48, 84, 66), border_radius=6)
         self.ctxt(ui, "QA TEST", 590, 56, self.f_tiny, muted)
         self.ctxt(ui, "%d / %d" % (min(self.rnd + 1, ROUNDS), ROUNDS), 590, 76, self.f_m)
-        for r, label, idx in ((BTN_CLEAR, "CLEAR ALL", CUR_CLEAR),):
+        for r, label, idx in ((BTN_CLEAR, "CLEAR ALL", CUR_CLEAR), (BTN_UNDO, "UNDO", CUR_UNDO)):
             hot = self.wcur == idx and not done
             pygame.draw.rect(ui, (255, 230, 120) if hot else (27, 41, 64), r, border_radius=5)
             self.ctxt(ui, label, r.centerx, r.y + 9, self.f_s, (20, 20, 20) if hot else (255, 255, 255))
-        if TEST_MODE:
-            pygame.draw.rect(ui, (214, 120, 40), BTN_AUTO, border_radius=5)
-            self.ctxt(ui, "AUTO-WIRE (test)", BTN_AUTO.centerx, BTN_AUTO.y + 9, self.f_s, (20, 20, 20))
         ui.blit(self.bb_surf, (16, 116))
         pygame.draw.rect(ui, (120, 110, 90), (16, 116, 928, 384), 3)
         for kind, y in RAIL_LINES:
@@ -1761,7 +1776,7 @@ class Game:
         for lbl, p in (("C", (160, 238)), ("B", (160, 270)), ("A", (160, 302))):
             self.txt(ui, lbl, p[0] + 10, p[1] - 8, self.f_s, (40, 40, 40))
         if not done:
-            if self.wcur != CUR_CLEAR:
+            if self.wcur not in (CUR_CLEAR, CUR_UNDO):
                 cp = self.cur_pos(self.wcur)
                 pygame.draw.circle(ui, (0, 0, 0), cp, 15, 7)
                 pygame.draw.circle(ui, (220, 80, 0), cp, 15, 4)
@@ -1777,6 +1792,7 @@ class Game:
         elif self.wsrc is not None: line, lc = "%s  <-  %s" % (sink_name(SINKS[self.wcur]), src_name(w.get(SINKS[self.wcur]))), (255, 230, 120)
         elif self.psel: line, lc = "Pin selected: %s  ->  now click a colored output, +5V or GND" % sink_name(self.psel), (130, 215, 255)
         elif self.msel: line, lc = "Selected: %s  ->  now click a white pin" % src_name(self.msel), (130, 215, 255)
+        elif self.wcur == CUR_UNDO: line, lc = "Press BTNC to undo the last wire change", muted
         elif self.wcur >= len(SINKS) and self.wcur != CUR_CLEAR: line, lc = "%s  -> press BTNC to pick it, then move to a white pin" % src_name(CUR_SRC[self.wcur - len(SINKS)][0]), muted
         elif self.wcur < len(SINKS): line, lc = "%s  =  %s" % (sink_name(SINKS[self.wcur]), src_name(w.get(SINKS[self.wcur]))), muted
         else: line, lc = "Press BTNC to remove every wire", muted
