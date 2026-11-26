@@ -1601,8 +1601,9 @@ class Game:
         draw_set(s, GOLD[k], x + 12, y + 9, 28, 48, (38, 54, 76))
         self.txt(s, "CBA = %d%d%d" % bits(k), x + 52, y + 12, self.f_s, (143, 161, 184))
         self.txt(s, "must show  %s" % CHAR_NAME[k], x + 52, y + 34, self.f_m)
-        self.txt(s, "tested by", x + 178, y + 14, self.f_tiny, (143, 161, 184))
-        self.txt(s, "Boss", x + 178, y + 28, self.f_tiny, (143, 161, 184))
+        self.txt(s, "your", x + 166, y + 14, self.f_tiny, (143, 161, 184))      # live: what the circuit shows right now for this input
+        self.txt(s, "output", x + 166, y + 28, self.f_tiny, (143, 161, 184))
+        draw_set(s, self.on_of(k), x + 214, y + 9, 28, 48, (38, 54, 76))
 
     def cu_whiteboard(self, s):
         pygame.draw.rect(s, (240, 240, 235), (40, 56, 560, 376), border_radius=6)
